@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 35" fill="none">
+  <!-- Mesh hexagon icon -->
+  <polygon points="10,5 20,5 25,14 20,23 10,23 5,14"
+           stroke="#0070f3" stroke-width="1.5" fill="none"/>
+  <circle cx="10" cy="5" r="2" fill="#0070f3"/>
+  <circle cx="20" cy="5" r="2" fill="#0070f3"/>
+  <circle cx="25" cy="14" r="2" fill="#00d4aa"/>
+  <circle cx="20" cy="23" r="2" fill="#0070f3"/>
+  <circle cx="10" cy="23" r="2" fill="#0070f3"/>
+  <circle cx="5"  cy="14" r="2" fill="#00d4aa"/>
+  <!-- inner lines -->
+  <line x1="15" y1="14" x2="10" y2="5"  stroke="#0070f3" stroke-width="0.8" stroke-dasharray="2"/>
+  <line x1="15" y1="14" x2="25" y2="14" stroke="#00d4aa" stroke-width="0.8" stroke-dasharray="2"/>
+  <line x1="15" y1="14" x2="10" y2="23" stroke="#0070f3" stroke-width="0.8" stroke-dasharray="2"/>
+  <circle cx="15" cy="14" r="2.5" fill="#0070f3"/>
+  <!-- Text -->
+  <text x="33" y="19" font-family="system-ui, -apple-system, sans-serif"
+        font-size="13" font-weight="700" fill="currentColor">
+    Service Mesh
+  </text>
+</svg>

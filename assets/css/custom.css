@@ -1,0 +1,159 @@
+/* Service Mesh Blog — Vibrant, clean theme */
+
+:root {
+  /* Override Hextra's primary color to a warmer, more energetic blue-indigo */
+  --primary-hue: 235;
+  --primary-saturation: 85%;
+  --primary-lightness: 60%;
+
+  /* Accent for highlights */
+  --accent: #6366f1;
+  --accent-light: #818cf8;
+}
+
+/* ── Navbar: cleaner with subtle bottom border ── */
+.nav-container {
+  border-bottom: 1px solid rgba(99, 102, 241, 0.1);
+}
+
+/* ── Site title: indigo accent ── */
+.nav-container a[href="/"] {
+  color: var(--accent) !important;
+}
+
+/* ── Hero headline: gradient text ── */
+.hextra-hero-headline {
+  background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 50%, #6366f1 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.dark .hextra-hero-headline {
+  background: linear-gradient(135deg, #818cf8 0%, #a78bfa 50%, #93c5fd 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* ── Hero subtitle: softer gray, not harsh black ── */
+.hextra-hero-subtitle {
+  color: #64748b !important;
+}
+.dark .hextra-hero-subtitle {
+  color: #94a3b8 !important;
+}
+
+/* ── Feature cards: subtle lift on hover ── */
+.hextra-card {
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+.hextra-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 25px -5px rgba(99, 102, 241, 0.15);
+}
+
+/* ── Blog post list: warmer link colors ── */
+article a h3 {
+  transition: color 0.15s ease;
+}
+article a:hover h3 {
+  color: var(--accent) !important;
+}
+
+/* ── Code blocks: softer background ── */
+pre {
+  border-radius: 12px !important;
+  border: 1px solid rgba(99, 102, 241, 0.1) !important;
+}
+
+/* ── Inline code: tinted with accent ── */
+:not(pre) > code {
+  background: rgba(99, 102, 241, 0.08) !important;
+  color: #4f46e5 !important;
+  padding: 2px 6px !important;
+  border-radius: 5px !important;
+  font-size: 0.88em !important;
+}
+.dark :not(pre) > code {
+  background: rgba(129, 140, 248, 0.15) !important;
+  color: #a5b4fc !important;
+}
+
+/* ── Tables: cleaner with accent header ── */
+table th {
+  background: linear-gradient(135deg, #4f46e5, #6366f1) !important;
+  color: white !important;
+  font-weight: 600 !important;
+  padding: 10px 14px !important;
+}
+table th:first-child {
+  border-radius: 8px 0 0 0;
+}
+table th:last-child {
+  border-radius: 0 8px 0 0;
+}
+table td {
+  padding: 10px 14px !important;
+}
+table tr:hover td {
+  background: rgba(99, 102, 241, 0.04);
+}
+
+/* ── Blockquotes: accent left border ── */
+blockquote {
+  border-left: 3px solid var(--accent) !important;
+  background: rgba(99, 102, 241, 0.04) !important;
+  border-radius: 0 8px 8px 0 !important;
+  padding: 12px 16px !important;
+}
+.dark blockquote {
+  background: rgba(99, 102, 241, 0.08) !important;
+}
+
+/* ── Tag pills on category pages ── */
+.hx\:bg-primary-50 {
+  background-color: rgba(99, 102, 241, 0.08) !important;
+}
+.hx\:text-primary-700 {
+  color: #4f46e5 !important;
+}
+
+/* ── Scrollbar (webkit) ── */
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(99, 102, 241, 0.2);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(99, 102, 241, 0.4);
+}
+
+/* ── Smooth page transitions ── */
+main {
+  animation: fadeIn 0.3s ease-out;
+}
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* ── Footer: subtle ── */
+footer {
+  border-top: 1px solid rgba(99, 102, 241, 0.08) !important;
+}
+
+/* ── TOC sidebar links ── */
+#TableOfContents a:hover {
+  color: var(--accent) !important;
+}
+
+/* ── Selection color ── */
+::selection {
+  background: rgba(99, 102, 241, 0.2);
+}
