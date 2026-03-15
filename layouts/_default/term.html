@@ -44,7 +44,7 @@
                   {{ .Date.Format "Jan 2, 2006" }}
                 </time>
                 <span class="hx:w-1 hx:h-1 hx:rounded-full hx:bg-gray-300 hx:dark:bg-gray-600"></span>
-                <span>{{ math.Round (div (countwords .Content) 200.0) }} min read</span>
+                <span>{{ .ReadingTime }} min read</span>
               </div>
 
               {{/* Title */}}
