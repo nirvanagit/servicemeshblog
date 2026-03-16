@@ -168,38 +168,34 @@ WASM in Envoy provides a true sandbox. This isn't just "we made it hard to escap
 Each WASM module gets a **linear memory** — a contiguous byte array that starts at 0 and grows upward. This is the only memory the WASM module can access.
 
 ```mermaid
-block-beta
-    columns 3
-
-    block:envoy:3
-        columns 3
-        space:3
-        A["Envoy Core Memory\n(config, clusters, listeners)\n🔒 WASM cannot touch"]:3
-        space:3
-        block:vm:3
-            columns 1
-            B["WASM VM Instance"]
-            block:linear
-                columns 1
-                C["Linear Memory (WASM accessible ✅)"]
-                D["0x0000 — Stack"]
-                E["Heap"]
-                F["Data"]
-                G["0xFFFF — End"]
+graph LR
+    subgraph Process["Envoy Process Memory"]
+        direction LR
+        subgraph Core["🔒 Envoy Core Memory"]
+            A1["Config"]
+            A2["Clusters"]
+            A3["Listeners"]
+        end
+        subgraph VM["WASM VM Instance"]
+            subgraph Linear["✅ Linear Memory (WASM accessible)"]
+                B1["0x0000 Stack"] --> B2["Heap"] --> B3["Data"] --> B4["0xFFFF End"]
             end
         end
-        space:3
     end
 
-    style envoy fill:#f5f5f5,stroke:#616161,stroke-width:2px
-    style A fill:#ffcdd2,stroke:#c62828,color:#b71c1c
-    style vm fill:#e8eaf6,stroke:#3949ab,stroke-width:2px
-    style linear fill:#c8e6c9,stroke:#2e7d32,stroke-width:2px
-    style C fill:#a5d6a7,stroke:#2e7d32,color:#1b5e20
-    style D fill:#fff,stroke:#43a047
-    style E fill:#fff,stroke:#43a047
-    style F fill:#fff,stroke:#43a047
-    style G fill:#fff,stroke:#43a047
+    Core -.-x|"WASM cannot access"| VM
+
+    style Process fill:#f5f5f5,stroke:#616161,stroke-width:2px
+    style Core fill:#ffcdd2,stroke:#c62828,stroke-width:2px
+    style VM fill:#e8eaf6,stroke:#3949ab,stroke-width:2px
+    style Linear fill:#c8e6c9,stroke:#2e7d32,stroke-width:2px
+    style A1 fill:#ffcdd2,stroke:#c62828
+    style A2 fill:#ffcdd2,stroke:#c62828
+    style A3 fill:#ffcdd2,stroke:#c62828
+    style B1 fill:#a5d6a7,stroke:#2e7d32
+    style B2 fill:#a5d6a7,stroke:#2e7d32
+    style B3 fill:#a5d6a7,stroke:#2e7d32
+    style B4 fill:#a5d6a7,stroke:#2e7d32
 ```
 
 The WASM instruction set enforces this boundary. Every memory access in WASM is a relative offset within the linear memory. There is no instruction in WASM that lets you compute an arbitrary pointer to host memory. The runtime (V8 or Wasmtime) performs bounds checking on every memory access.
