@@ -39,11 +39,11 @@
           <div class="hx:flex hx:flex-col hx:md:flex-row hx:md:items-start hx:gap-4">
             <div class="hx:flex-1 hx:min-w-0">
               {{/* Date & Reading Time */}}
-              <div class="hx:flex hx:items-center hx:gap-3 hx:text-sm hx:text-gray-400 hx:dark:text-gray-500 hx:mb-2">
+              <div class="hx:flex hx:items-center hx:gap-1.5 hx:text-sm hx:text-gray-400 hx:dark:text-gray-500 hx:mb-2">
                 <time datetime="{{ .Date.Format "2006-01-02" }}">
                   {{ .Date.Format "Jan 2, 2006" }}
                 </time>
-                <span class="hx:w-1 hx:h-1 hx:rounded-full hx:bg-gray-300 hx:dark:bg-gray-600"></span>
+                <span>&middot;</span>
                 <span>{{ .ReadingTime }} min read</span>
               </div>
 

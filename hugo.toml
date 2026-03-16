@@ -25,8 +25,8 @@ enableGitInfo = true
     displayTitle = true
     displayLogo = true
     [params.navbar.logo]
-      path = "logo.svg"
-      dark = "logo.svg"
+      path = "sm-logo.png"
+      dark = "sm-logo.png"
       link = "/"
       width = 40
       height = 40

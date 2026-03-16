@@ -1,0 +1,91 @@
+{{ define "main" }}
+<div class='hx:mx-auto hx:flex hextra-max-page-width'>
+  <article class="hx:w-full hx:break-words hx:flex hx:min-h-[calc(100vh-var(--navbar-height))] hx:min-w-0 hx:justify-center hx:pb-8 hx:pr-[calc(env(safe-area-inset-right)-1.5rem)]">
+    <main id="content" class="hx:w-full hx:min-w-0 hextra-max-content-width hx:px-6 hx:md:px-12 hx:pt-4 hx:md:pt-8">
+
+      {{/* Category Header */}}
+      <div class="hx:mb-10">
+        <div class="hx:flex hx:items-center hx:gap-3 hx:mb-3">
+          <span class="hx:inline-flex hx:items-center hx:justify-center hx:w-10 hx:h-10 hx:rounded-xl hx:bg-primary-100 hx:dark:bg-primary-900/30">
+            {{ if eq .Title "Operations" }}
+              <svg xmlns="http://www.w3.org/2000/svg" class="hx:w-5 hx:h-5 hx:text-primary-600" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M11.49 3.17c-.38-1.56-2.6-1.56-2.98 0a1.532 1.532 0 01-2.286.948c-1.372-.836-2.942.734-2.106 2.106.54.886.061 2.042-.947 2.287-1.561.379-1.561 2.6 0 2.978a1.532 1.532 0 01.947 2.287c-.836 1.372.734 2.942 2.106 2.106a1.532 1.532 0 012.287.947c.379 1.561 2.6 1.561 2.978 0a1.533 1.533 0 012.287-.947c1.372.836 2.942-.734 2.106-2.106a1.533 1.533 0 01.947-2.287c1.561-.379 1.561-2.6 0-2.978a1.532 1.532 0 01-.947-2.287c.836-1.372-.734-2.942-2.106-2.106a1.532 1.532 0 01-2.287-.947zM10 13a3 3 0 100-6 3 3 0 000 6z" clip-rule="evenodd"/></svg>
+            {{ else if eq .Title "Traffic Management" }}
+              <svg xmlns="http://www.w3.org/2000/svg" class="hx:w-5 hx:h-5 hx:text-primary-600" viewBox="0 0 20 20" fill="currentColor"><path d="M8 5a1 1 0 100 2h5.586l-1.293 1.293a1 1 0 001.414 1.414l3-3a1 1 0 000-1.414l-3-3a1 1 0 10-1.414 1.414L13.586 5H8zM12 15a1 1 0 100-2H6.414l1.293-1.293a1 1 0 10-1.414-1.414l-3 3a1 1 0 000 1.414l3 3a1 1 0 001.414-1.414L6.414 15H12z"/></svg>
+            {{ else if eq .Title "Security" }}
+              <svg xmlns="http://www.w3.org/2000/svg" class="hx:w-5 hx:h-5 hx:text-primary-600" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M2.166 4.999A11.954 11.954 0 0010 1.944 11.954 11.954 0 0017.834 5c.11.65.166 1.32.166 2.001 0 5.225-3.34 9.67-8 11.317C5.34 16.67 2 12.225 2 7c0-.682.057-1.35.166-2.001zm11.541 3.708a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/></svg>
+            {{ else if eq .Title "Observability" }}
+              <svg xmlns="http://www.w3.org/2000/svg" class="hx:w-5 hx:h-5 hx:text-primary-600" viewBox="0 0 20 20" fill="currentColor"><path d="M2 11a1 1 0 011-1h2a1 1 0 011 1v5a1 1 0 01-1 1H3a1 1 0 01-1-1v-5zM8 7a1 1 0 011-1h2a1 1 0 011 1v9a1 1 0 01-1 1H9a1 1 0 01-1-1V7zM14 4a1 1 0 011-1h2a1 1 0 011 1v12a1 1 0 01-1 1h-2a1 1 0 01-1-1V4z"/></svg>
+            {{ else }}
+              <svg xmlns="http://www.w3.org/2000/svg" class="hx:w-5 hx:h-5 hx:text-primary-600" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M2 5a2 2 0 012-2h8a2 2 0 012 2v10a2 2 0 002 2H4a2 2 0 01-2-2V5zm3 1h6v4H5V6zm6 6H5v2h6v-2z" clip-rule="evenodd"/><path d="M15 7h1a2 2 0 012 2v5.5a1.5 1.5 0 01-3 0V7z"/></svg>
+            {{ end }}
+          </span>
+          <h1 class="hx:text-3xl hx:md:text-4xl hx:font-bold hx:tracking-tight hx:text-slate-900 hx:dark:text-slate-100">
+            {{ .Title }}
+          </h1>
+        </div>
+        {{ with .Description }}
+        <p class="hx:text-lg hx:text-gray-500 hx:dark:text-gray-400 hx:max-w-2xl">{{ . }}</p>
+        {{ end }}
+        <div class="hx:mt-3 hx:text-sm hx:text-gray-400 hx:dark:text-gray-500">
+          {{ len .Pages }} {{ if eq (len .Pages) 1 }}article{{ else }}articles{{ end }}
+        </div>
+      </div>
+
+      {{/* Post Cards Grid */}}
+      {{ if .Pages }}
+      <div class="hx:grid hx:grid-cols-1 hx:gap-6">
+        {{ range .Pages.ByDate.Reverse }}
+        <a href="{{ .RelPermalink }}" class="hx:group hx:block hx:rounded-2xl hx:border hx:border-gray-200 hx:dark:border-neutral-800 hx:bg-white hx:dark:bg-neutral-900 hx:p-6 hx:transition-all hx:duration-200 hover:hx:border-primary-300 hover:hx:shadow-lg hover:hx:shadow-primary-100/50 hx:dark:hover:border-primary-700 hx:dark:hover:shadow-primary-900/20 hx:no-underline">
+          <div class="hx:flex hx:flex-col hx:md:flex-row hx:md:items-start hx:gap-4">
+            <div class="hx:flex-1 hx:min-w-0">
+              {{/* Date & Reading Time */}}
+              <div class="hx:flex hx:items-center hx:gap-1.5 hx:text-sm hx:text-gray-400 hx:dark:text-gray-500 hx:mb-2">
+                <time datetime="{{ .Date.Format "2006-01-02" }}">
+                  {{ .Date.Format "Jan 2, 2006" }}
+                </time>
+                <span>&middot;</span>
+                <span>{{ .ReadingTime }} min read</span>
+              </div>
+
+              {{/* Title */}}
+              <h2 class="hx:text-xl hx:font-semibold hx:text-slate-900 hx:dark:text-slate-100 group-hover:hx:text-primary-600 hx:dark:group-hover:text-primary-400 hx:transition-colors hx:mb-2">
+                {{ .Title }}
+              </h2>
+
+              {{/* Description */}}
+              {{ with .Description }}
+              <p class="hx:text-gray-500 hx:dark:text-gray-400 hx:text-[0.95rem] hx:leading-relaxed hx:mb-3 hx:line-clamp-2">
+                {{ . }}
+              </p>
+              {{ end }}
+
+              {{/* Tags */}}
+              {{ with .Params.tags }}
+              <div class="hx:flex hx:flex-wrap hx:gap-2">
+                {{ range . }}
+                <span class="hx:inline-flex hx:items-center hx:px-2.5 hx:py-0.5 hx:rounded-full hx:text-xs hx:font-medium hx:bg-primary-50 hx:text-primary-700 hx:dark:bg-primary-900/30 hx:dark:text-primary-300">
+                  {{ . }}
+                </span>
+                {{ end }}
+              </div>
+              {{ end }}
+            </div>
+
+            {{/* Arrow indicator */}}
+            <div class="hx:hidden hx:md:flex hx:items-center hx:self-center hx:text-gray-300 hx:dark:text-gray-600 group-hover:hx:text-primary-500 hx:transition-all group-hover:hx:translate-x-1">
+              <svg xmlns="http://www.w3.org/2000/svg" class="hx:w-5 hx:h-5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z" clip-rule="evenodd"/></svg>
+            </div>
+          </div>
+        </a>
+        {{ end }}
+      </div>
+      {{ else }}
+      <div class="hx:text-center hx:py-16">
+        <p class="hx:text-gray-400 hx:dark:text-gray-500 hx:text-lg">No articles in this category yet. Check back soon.</p>
+      </div>
+      {{ end }}
+
+    </main>
+  </article>
+</div>
+{{ end }}
