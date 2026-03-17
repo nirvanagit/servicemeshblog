@@ -1,4 +1,4 @@
-baseURL = "/"
+baseURL = "https://servicemeshblog.com/"
 languageCode = "en-us"
 title = "Service Mesh Blog"
 enableRobotsTXT = true
