@@ -1,0 +1,51 @@
+# Step 1: Register the ext_authz provider in Istio's mesh config.
+# Run: kubectl edit configmap istio -n istio-system
+# Add this under mesh.extensionProviders:
+#
+# extensionProviders:
+# - name: "ext-authz-grpc"
+#   envoyExtAuthzGrpc:
+#     service: "ext-authz.auth.svc.cluster.local"
+#     port: 9001
+#     timeout: 3s
+#     failOpen: false
+
+---
+# Step 2: Apply this AuthorizationPolicy to enforce auth on the gateway.
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata:
+  name: ext-authz-gateway
+  namespace: istio-system
+spec:
+  selector:
+    matchLabels:
+      istio: ingressgateway
+  action: CUSTOM
+  provider:
+    name: ext-authz-grpc
+  rules:
+  - to:
+    - operation:
+        paths: ["/*"]
+        notPaths: ["/healthz", "/readyz"]
+
+---
+# Optional: Apply to specific workloads instead of the gateway.
+# This enforces auth at the sidecar level for the "frontend" service.
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata:
+  name: ext-authz-frontend
+  namespace: production
+spec:
+  selector:
+    matchLabels:
+      app: frontend
+  action: CUSTOM
+  provider:
+    name: ext-authz-grpc
+  rules:
+  - to:
+    - operation:
+        paths: ["/api/*", "/admin/*"]
