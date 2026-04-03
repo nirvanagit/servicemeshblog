@@ -138,113 +138,9 @@ If the JWT is valid, Istio injects the claims into the request as headers (via `
 
 Once claims are extracted, `AuthorizationPolicy` can use them to make authorization decisions.
 
-### Example 1: Tenant Isolation
+### Matching JWT Claims Directly
 
-Ensure users can only access their own tenant's data:
-
-```yaml
-apiVersion: security.istio.io/v1beta1
-kind: AuthorizationPolicy
-metadata:
-  name: tenant-isolation
-  namespace: istio-system
-spec:
-  selector:
-    matchLabels:
-      istio: ingressgateway
-  action: ALLOW
-  rules:
-  - from:
-    - source:
-        principals: ["*"]
-    to:
-    - operation:
-        paths: ["/api/tenants/*"]
-    when:
-    - key: request.headers[x-tenant-id]
-      values:
-    # Extract tenant_id from JWT and match against URL path
-    # This rule allows if the tenant in the JWT matches the URL path
-    - key: request.path
-      notValues:
-      - "/api/tenants/*/admin"  # Block admin endpoints
-```
-
-But wait — how do we extract the `tenant_id` claim from the JWT and match it against the request path?
-
-**The challenge:** `AuthorizationPolicy` can match against headers, but it can't extract nested claims from the JWT payload. For complex claim logic, you need a different approach.
-
-### Better Approach: Extract Claims as Headers
-
-Configure Istio to automatically extract specific claims and inject them as headers:
-
-```yaml
-apiVersion: security.istio.io/v1beta1
-kind: RequestAuthentication
-metadata:
-  name: jwt-auth-with-claims
-  namespace: istio-system
-spec:
-  selector:
-    matchLabels:
-      istio: ingressgateway
-  jwtRules:
-  - issuer: "https://accounts.example.com"
-    jwksUri: "https://accounts.example.com/.well-known/jwks.json"
-    audiences: "api.example.com"
-    # Use an EnvoyFilter to extract specific claims as headers
-```
-
-Actually, Istio doesn't directly extract nested claims to headers. For that, you need an **EnvoyFilter**:
-
-```yaml
-apiVersion: networking.istio.io/v1alpha3
-kind: EnvoyFilter
-metadata:
-  name: jwt-claim-extraction
-  namespace: istio-system
-spec:
-  workloadSelector:
-    labels:
-      istio: ingressgateway
-  configPatches:
-  - applyTo: HTTP_FILTER
-    match:
-      context: GATEWAY
-      listener:
-        filterChain:
-          filter:
-            name: envoy.filters.network.http_connection_manager
-            subFilter:
-              name: envoy.filters.http.jwt_authn
-    patch:
-      operation: INSERT_AFTER
-      value:
-        name: envoy.filters.http.lua
-        typedConfig:
-          "@type": type.googleapis.com/envoy.extensions.filters.http.lua.v3.Lua
-          inline_code: |
-            function envoy_on_response(response_handle)
-              -- Extract tenant_id from x-jwt-payload header
-              local jwt_payload = response_handle:headers():get("x-jwt-payload")
-              if jwt_payload then
-                local json = require("cjson")
-                local decoded = json.decode(ngx.decode_base64(jwt_payload))
-                if decoded.tenant_id then
-                  response_handle:headers():add("x-tenant-id", decoded.tenant_id)
-                end
-                if decoded.roles then
-                  response_handle:headers():add("x-roles", table.concat(decoded.roles, ","))
-                end
-              end
-            end
-```
-
-Actually, Lua filters run on responses, not requests. For request-time header injection, use a **custom ext_authz service** or **WASM filter** (see our [ext_authz guide](/blog/istio-ext-authz-guide/) for details).
-
-### Simpler Approach: Use AuthorizationPolicy with JWT Claims Directly
-
-Istio 1.18+ supports matching JWT claims directly in AuthorizationPolicy. Here's how:
+Istio supports matching JWT claims directly in AuthorizationPolicy. Once `RequestAuthentication` validates the token, the claims become available for authorization decisions via `request.auth.claims[claim_name]`:
 
 ```yaml
 apiVersion: security.istio.io/v1beta1
@@ -611,9 +507,9 @@ kubectl set env deployment/istio-ingressgateway \
 
 ## Limitations
 
-### 1. Can't Extract Nested Claims Programmatically
+### 1. Only Top-Level Claims
 
-AuthorizationPolicy can only match top-level claims. If your JWT has:
+AuthorizationPolicy can only match top-level claims. If your JWT has nested data:
 
 ```json
 {
@@ -623,34 +519,34 @@ AuthorizationPolicy can only match top-level claims. If your JWT has:
 }
 ```
 
-You can't match `request.auth.claims[user.department]`. You'd need a custom ext_authz service or WASM filter to handle nested claims.
+You can't directly match `user.department`. **Workaround:** Flatten your JWT claims at the auth provider level, or use [ext_authz](/blog/istio-ext-authz-guide/) for complex logic.
 
 ### 2. No Negative Matching
 
 You can list allowed values but not disallowed values:
 
 ```yaml
-# ✅ Allowed
+# ✅ Works
 when:
 - key: request.auth.claims[role]
   values: ["admin", "editor"]
 
-# ❌ Not supported: deny if NOT admin
+# ❌ Doesn't work
 when:
 - key: request.auth.claims[role]
   notValues: ["viewer"]
 ```
 
-For negative matching, use a DENY-type AuthorizationPolicy.
+**Workaround:** Use a DENY-type AuthorizationPolicy for explicit denials.
 
-### 3. Limited Claim Types
+### 3. Limited Data Types
 
-Istio can match:
-- String claims (exact match)
-- Array claims (any value matches)
-- Boolean claims (can match "true" or "false")
+AuthorizationPolicy matches only string and array claims. It can't match:
+- Nested objects
+- Numeric ranges
+- Complex logic (e.g., "expiry is within 7 days")
 
-Complex types (objects, numbers as ranges) require external logic.
+**Workaround:** For complex logic, use [ext_authz](/blog/istio-ext-authz-guide/) service.
 
 ---
 
