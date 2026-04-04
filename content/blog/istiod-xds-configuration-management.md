@@ -49,7 +49,7 @@ graph TD
     F --> G[Push Queue]
     G --> H{Per-Proxy Push Worker}
     H --> I[Compute delta vs.<br/>last ACK'd version]
-    I --> J[Serialize xDS push payload<br/>proto marshal the delta]
+    I --> J[Serialize xDS response<br/>bytes required before gRPC can transmit]
     J --> K[Send over gRPC stream]
     K --> L{Proxy Response}
     L -->|ACK| M[Record version,<br/>update convergence metrics]
@@ -120,9 +120,9 @@ The number of concurrent push workers is controlled by **`PILOT_PUSH_THROTTLE`**
 | CPU | 🟡 **Medium** | For each worker, istiod walks the shared push context and extracts the subset relevant to that proxy, then diffs it against the last-ACK'd version. Cost grows with `PILOT_PUSH_THROTTLE` (more concurrent workers) and delta size (more changes = larger diff). A full state-of-world push after a proxy restart is the worst case — no prior ACK'd state means sending the complete config, not just the delta. |
 | Memory | 🟡 **Medium** | istiod maintains a version map per proxy (one nonce per xDS type: LDS, RDS, CDS, EDS, NDS). Each entry is small (~1–2 KB), but at 10,000 proxies this totals 1–2 GB of persistent per-proxy state that is never freed while the proxy is connected. This memory does not shrink between push cycles. |
 
-### Stage 6: Serialization
+### Stage 6: Serialize xDS Response
 
-Workers marshal the computed delta into a protobuf-encoded payload ready to write to the gRPC stream. Note: the xDS protocol calls this message a `DiscoveryResponse` — a legacy name from when xDS was purely request/response. In istiod's push model, this is an outgoing *push*, not a reply to anything.
+Workers serialize the computed delta into a `DiscoveryResponse` protobuf message. Serialization must happen before the gRPC send — gRPC transmits raw bytes over the wire, not Go structs, so the in-memory config objects must be encoded first. Note: the xDS protocol calls this message a `DiscoveryResponse` — a legacy name from when xDS was purely request/response. In istiod's push model this is an outgoing *push*, not a reply to anything.
 
 | Resource | Intensity | What Makes It High |
 |----------|-----------|-------------------|
@@ -177,7 +177,7 @@ NACK handling itself is cheap. The *consequence* of NACKs — proxies staying on
 | Push Context Rebuild | 🔴 High | 🔴 High | Service count × policy complexity |
 | Push Queue | 🟢 Low | 🟡 Medium | Connected proxy count |
 | Per-Proxy Delta Computation | 🟡 Medium | 🟡 Medium | Proxy count × delta size |
-| Serialization | 🟡 Medium | 🟡 Medium | Response payload size (dramatically reduced by Sidecar scoping) |
+| Serialize xDS Response | 🟡 Medium | 🟡 Medium | Delta size (dramatically reduced by Sidecar scoping) |
 | gRPC Send | 🟢 Low | 🟢 Low | Network throughput; blocks worker on backpressure |
 | Certificate Issuance | 🔴 High | 🟢 Low | Proxy count ÷ certificate TTL |
 | ACK / NACK Handling | 🟢 Low | 🟢 Low | Push frequency × proxy count |
