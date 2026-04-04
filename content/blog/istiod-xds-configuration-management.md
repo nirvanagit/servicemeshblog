@@ -58,16 +58,28 @@ graph TD
 
 **Each stage has a cost.** Understanding which stage dominates your latency is the starting point for any istiod performance investigation.
 
-### Stage 1: Informer Cache (near-zero cost)
+### Stage 1: Informer Cache
 
 Istiod uses Kubernetes shared informers to watch all relevant resources — Istio CRDs, Services, Endpoints, Namespaces, Pods, Secrets. The informer cache is an in-memory snapshot of Kubernetes state. Reads from it are O(1) and never hit the API server.
 
-### Stage 2: Debouncing (intentional delay)
+| Resource | Intensity | Notes |
+|----------|-----------|-------|
+| CPU | 🟢 **Low** | O(1) reads; event dispatch is lightweight goroutine work |
+| Memory | 🔴 **High** | Full in-memory copy of all watched Kubernetes objects — scales with cluster size, not mesh size |
+
+The memory cost here is often underestimated. A cluster with 10,000 pods, 1,000 services, and thousands of Endpoints objects can push the informer cache alone to 500 MB–1 GB.
+
+### Stage 2: Debouncing
 
 Istiod does not push immediately on every change. It waits for a quiet window so that a rapid sequence of changes (e.g., a rolling deployment updating 50 pods) produces one push, not 50. Two parameters control this:
 
 - **`PILOT_DEBOUNCE_AFTER`** (default: `100ms`) — how long after the *last* event to wait before triggering a push
 - **`PILOT_DEBOUNCE_MAX`** (default: `10s`) — the maximum time istiod will keep delaying, even if events keep arriving
+
+| Resource | Intensity | Notes |
+|----------|-----------|-------|
+| CPU | 🟢 **Low** | Timer resets and event queuing; negligible compute |
+| Memory | 🟢 **Low** | Buffers only references to pending events, not full object copies |
 
 This is a deliberate trade-off: higher debounce values reduce push frequency (less CPU) but increase propagation latency (slower convergence).
 
@@ -81,13 +93,94 @@ This is the most CPU-intensive step. Istiod must re-evaluate all Istio configura
 - Expanding `Sidecar` scoping rules per namespace
 - Merging Envoy filter patches from `EnvoyFilter` resources
 
-The cost scales with the number of services, namespaces, and policies — not with the number of proxies.
+| Resource | Intensity | Notes |
+|----------|-----------|-------|
+| CPU | 🔴 **High** | Full policy evaluation across all services × namespaces on every push cycle |
+| Memory | 🔴 **High** | The resulting push context holds the complete xDS model for the mesh; shared across all workers but large — often 1–4 GB at 5,000+ services |
 
-### Stage 4: Push Queue and Per-Proxy Workers
+The cost scales with the number of services, namespaces, and policies — not with the number of proxies. This is important: a mesh with 5,000 services and 10 proxies is just as expensive to rebuild a context for as one with 5,000 proxies.
 
-After the push context is built, istiod enqueues a push job for every connected proxy that needs an update. A pool of workers picks these jobs up and computes the actual delta — what changed since the proxy's last ACK'd version. This delta computation is why istiod uses **incremental xDS (delta xDS)**: instead of sending a full snapshot of all clusters or routes, it sends only what changed.
+### Stage 4: Push Queue
 
-The number of concurrent push workers is controlled by **`PILOT_PUSH_THROTTLE`** (default: `100`). With 1,000 connected proxies and a throttle of 100, the last proxy receives its update approximately 10 push-durations after the first.
+After the push context is built, istiod enqueues a push job for every connected proxy that needs an update.
+
+| Resource | Intensity | Notes |
+|----------|-----------|-------|
+| CPU | 🟢 **Low** | Queue operations are O(1); no computation happens here |
+| Memory | 🟡 **Medium** | One queue entry per connected proxy per push cycle; at 10,000 proxies this is a non-trivial allocation |
+
+### Stage 5: Per-Proxy Delta Computation
+
+A pool of workers picks jobs from the queue and computes what changed since each proxy's last ACK'd version. This is why istiod uses **incremental xDS (delta xDS)**: instead of sending a full snapshot, it sends only what changed.
+
+The number of concurrent push workers is controlled by **`PILOT_PUSH_THROTTLE`** (default: `100`).
+
+| Resource | Intensity | Notes |
+|----------|-----------|-------|
+| CPU | 🟡 **Medium** | Diff against last-ACK'd nonce per resource type; scales with delta size and throttle setting |
+| Memory | 🟡 **Medium** | istiod holds last-ACK'd version maps per proxy (one entry per xDS type per proxy); ~1–2 KB per proxy, totaling ~1–2 GB at 10,000 proxies |
+
+### Stage 6: Serialization
+
+Workers serialize the delta into protobuf-encoded xDS responses ready to send over the wire.
+
+| Resource | Intensity | Notes |
+|----------|-----------|-------|
+| CPU | 🟡 **Medium** | Protobuf marshaling is fast but not free; cost scales with response payload size |
+| Memory | 🟡 **Medium** | Serialized bytes held in memory per worker until flushed to gRPC; `PILOT_PUSH_THROTTLE` × max response size gives peak allocation |
+
+Without `Sidecar` scoping, each response can be 10–50 MB (full mesh config). With scoping, the same response is typically under 500 KB.
+
+### Stage 7: gRPC Send
+
+The serialized response is written to the proxy's persistent gRPC stream.
+
+| Resource | Intensity | Notes |
+|----------|-----------|-------|
+| CPU | 🟢 **Low** | Network I/O; gRPC handles framing and flow control |
+| Memory | 🟢 **Low** | gRPC manages its own send buffers independently of istiod's heap |
+
+When proxies are slow to consume data (backpressure), gRPC write calls block the push worker goroutine — tying up a worker slot without additional CPU or memory cost, but increasing queue wait time for other proxies.
+
+### Stage 8: Certificate Issuance (Citadel CA)
+
+Istiod's built-in CA issues and rotates workload mTLS certificates (SVIDs) for every proxy. This runs continuously in the background, independent of xDS pushes. Certificate rotation triggers a targeted xDS push to the affected proxy.
+
+By default, certificates expire after 24 hours with rotation at 80% of TTL (~19.2 hours). At 10,000 proxies, this means istiod signs roughly one certificate every 7 seconds at steady state.
+
+| Resource | Intensity | Notes |
+|----------|-----------|-------|
+| CPU | 🔴 **High** | Each issuance is an asymmetric crypto operation (RSA-2048 or ECDSA P-256 signing); at scale, this is a continuous CPU tax |
+| Memory | 🟢 **Low** | Signing state is transient; the resulting certificate is small and handed off immediately |
+
+`PILOT_WORKLOAD_CERT_TTL` controls certificate lifetime. Longer TTL reduces rotation frequency and therefore CPU, at the cost of longer exposure windows if a private key is compromised.
+
+### Stage 9: ACK / NACK Handling
+
+After a proxy receives an xDS update, it responds with an ACK (config valid and applied) or NACK (config rejected, reason included). Istiod records the response and updates the proxy's version state.
+
+| Resource | Intensity | Notes |
+|----------|-----------|-------|
+| CPU | 🟢 **Low** | Map update per proxy per resource type |
+| Memory | 🟢 **Low** | Small update to existing per-proxy state already tracked in Stage 5 |
+
+NACK handling itself is cheap. The *consequence* of NACKs — proxies staying on stale config, triggering retry pushes — can amplify CPU and memory cost upstream.
+
+---
+
+## Resource Intensity at a Glance
+
+| Pipeline Stage | CPU | Memory | Scales With |
+|----------------|-----|--------|-------------|
+| Informer Cache | 🟢 Low | 🔴 High | Cluster object count (pods, services, endpoints) |
+| Debouncing | 🟢 Low | 🟢 Low | Event rate (bounded by debounce window) |
+| Push Context Rebuild | 🔴 High | 🔴 High | Service count × policy complexity |
+| Push Queue | 🟢 Low | 🟡 Medium | Connected proxy count |
+| Per-Proxy Delta Computation | 🟡 Medium | 🟡 Medium | Proxy count × delta size |
+| Serialization | 🟡 Medium | 🟡 Medium | Response payload size (dramatically reduced by Sidecar scoping) |
+| gRPC Send | 🟢 Low | 🟢 Low | Network throughput; blocks worker on backpressure |
+| Certificate Issuance | 🔴 High | 🟢 Low | Proxy count ÷ certificate TTL |
+| ACK / NACK Handling | 🟢 Low | 🟢 Low | Push frequency × proxy count |
 
 ---
 
@@ -367,6 +460,218 @@ Proxies in a namespace labeled `istio.io/rev=canary` connect to this instance, c
 
 ---
 
+## Remediation Playbook
+
+Use the intensity table above to identify which stages are 🔴 High for CPU or Memory, then apply the fixes below. Start at the highest-impact stage and work down.
+
+### When CPU Is High
+
+#### Push Context Rebuild is the culprit
+*Indicated by: `pilot_push_context_recompute_count` rate elevated, `pilot_xds_push_time` p99 high, istiod CPU sustained > 80% even outside rollouts.*
+
+**1. Add `Sidecar` scoping (highest impact)**
+
+This is almost always the right first fix. Without it, every context rebuild evaluates the full service mesh for every proxy.
+
+```yaml
+# Apply a default Sidecar to every namespace that restricts egress
+# to only what that namespace actually needs
+apiVersion: networking.istio.io/v1beta1
+kind: Sidecar
+metadata:
+  name: default
+  namespace: my-namespace
+spec:
+  egress:
+  - hosts:
+    - "./*"               # all services in same namespace
+    - "istio-system/*"   # istiod, Prometheus scrape endpoint
+```
+
+One `Sidecar` resource per namespace, applied mesh-wide, can cut push context build time by 60–90% in large meshes.
+
+**2. Restrict or remove `EnvoyFilter` resources**
+
+Each cluster-scoped `EnvoyFilter` is evaluated against every proxy on every push. Audit your `EnvoyFilter` resources:
+
+```bash
+kubectl get envoyfilter -A
+```
+
+For each one, add a `workloadSelector` to limit its scope:
+
+```yaml
+spec:
+  workloadSelector:
+    labels:
+      app: my-gateway   # instead of matching all proxies
+```
+
+**3. Increase debounce to batch more aggressively**
+
+```yaml
+# istiod deployment env vars
+- name: PILOT_DEBOUNCE_AFTER
+  value: "300ms"    # default 100ms — increase during high-churn periods
+- name: PILOT_DEBOUNCE_MAX
+  value: "15s"      # default 10s
+```
+
+This trades propagation latency for fewer push cycles. Acceptable for most production meshes where 5–15s convergence is fine.
+
+**4. Reduce `ServiceEntry` complexity**
+
+Replace broad wildcard `ServiceEntry` resources with specific ones. Remove `MESH_INTERNAL` `ServiceEntry` resources that duplicate Kubernetes `Service` objects — istiod tracks them like services and adds them to every context build.
+
+#### Certificate Issuance is the culprit
+*Indicated by: CPU elevated during steady state with no active deployments, `citadel_server_csr_count` rate non-trivial.*
+
+**1. Extend certificate TTL**
+
+```yaml
+- name: PILOT_WORKLOAD_CERT_TTL
+  value: "48h"    # default 24h — doubles the interval between rotations
+```
+
+Balance against your security posture: longer TTL means longer exposure if a key is compromised.
+
+**2. Switch from RSA to ECDSA**
+
+ECDSA P-256 signing is roughly 10x faster than RSA-2048 for the same security level. Configure istiod to issue ECDSA certificates:
+
+```yaml
+- name: CITADEL_SELF_SIGNED_CA_CERT_TTL
+  value: "87600h"
+- name: PILOT_CERT_PROVIDER
+  value: "istiod"
+```
+
+In your `MeshConfig`:
+```yaml
+meshConfig:
+  defaultConfig:
+    privateKeyProvider:
+      cryptomb: {}  # enables hardware-accelerated ECDSA where available
+```
+
+**3. Offload to an external CA**
+
+Delegate all certificate signing to cert-manager, HashiCorp Vault, or AWS ACM PCA. Istiod handles the CSR flow but does not perform signing:
+
+```yaml
+- name: EXTERNAL_CA
+  value: "true"
+- name: CA_ADDR
+  value: "cert-manager-istio-csr.cert-manager.svc:443"
+```
+
+This removes certificate issuance CPU from istiod entirely.
+
+#### Push workers are saturated
+*Indicated by: `pilot_proxy_queue_time` p99 elevated, `pilot_xds_clients` high.*
+
+**1. Tune `PILOT_PUSH_THROTTLE`**
+
+Increase cautiously — higher values spike CPU:
+
+```yaml
+- name: PILOT_PUSH_THROTTLE
+  value: "200"    # default 100
+```
+
+**2. Shard the mesh by proxy count**
+
+If CPU is high primarily because of the number of connected proxies (not context complexity), shard by splitting namespaces across istiod revisions. Each revision handles a fraction of the total proxy count.
+
+---
+
+### When Memory Is High
+
+#### Informer Cache is the culprit
+*Indicated by: memory growing in proportion to cluster object count (pods, services, endpoints), not to mesh config complexity.*
+
+**1. Enable EndpointSlice instead of Endpoints**
+
+EndpointSlice is more granular and produces smaller watch events than the monolithic `Endpoints` object. Ensure istiod is configured to use it (default in Kubernetes 1.21+):
+
+```yaml
+- name: PILOT_USE_ENDPOINT_SLICE
+  value: "true"
+```
+
+**2. Filter watched namespaces**
+
+If your mesh only spans a subset of namespaces, configure istiod to watch only those:
+
+```yaml
+- name: WATCHED_NAMESPACES
+  value: "payments,auth,shared-services,istio-system"
+```
+
+This prevents the informer cache from holding state for namespaces that have no mesh workloads, which is common in large multi-tenant clusters.
+
+**3. Increase istiod memory limits**
+
+If the informer cache size is legitimately driven by cluster scale, set memory limits accordingly and ensure istiod is on nodes with sufficient headroom:
+
+```yaml
+resources:
+  requests:
+    memory: "2Gi"
+  limits:
+    memory: "8Gi"
+```
+
+#### Push Context is the culprit
+*Indicated by: memory spikes coinciding with push cycles, proportional to service count.*
+
+The push context holds the full xDS model for the mesh in memory during each push cycle. This is the same root cause as the CPU issue — too many services in scope.
+
+**1. Add `Sidecar` scoping (same fix as CPU)**
+
+Scoping reduces not just CPU but the size of the push context itself. A proxy scoped to 20 services generates a context object that is ~25x smaller than one scoped to the full mesh. With many workers running simultaneously, this multiplies into significant memory savings.
+
+**2. Tune `PILOT_PUSH_THROTTLE` downward**
+
+Each concurrent worker holds a serialized xDS payload in memory. Reducing throttle reduces peak memory allocation during large push waves:
+
+```yaml
+- name: PILOT_PUSH_THROTTLE
+  value: "50"    # trade convergence speed for memory headroom
+```
+
+**3. Reduce `AuthorizationPolicy` and `PeerAuthentication` count**
+
+These are evaluated per-workload during context build and contribute to context size. Consolidate overlapping policies where possible. A single namespace-scoped `AuthorizationPolicy` is cheaper than one per workload.
+
+#### Per-proxy state is the culprit
+*Indicated by: memory growing linearly with `pilot_xds_clients`, not with push frequency or service count.*
+
+**1. Shard the mesh**
+
+The cleanest solution when memory growth is driven purely by proxy count. Each istiod revision holds state for a fraction of the proxies.
+
+**2. Audit zombie connections**
+
+Watch `pilot_xds_clients` against your expected sidecar count. If clients exceed expected, you have zombie connections from pods that terminated without cleanly closing their gRPC stream. This is common with spot/preemptible nodes:
+
+```bash
+# Expected sidecar count
+kubectl get pods -A -l security.istio.io/tlsMode=istio | wc -l
+
+# Actual connections
+kubectl exec -n istio-system deploy/istiod -- \
+  curl -s localhost:15014/metrics | grep pilot_xds_clients
+```
+
+If the gap is large, check `pilot_destroy_time_seconds` — long destroy times indicate istiod is slow to clean up disconnected proxy state, which temporarily leaks memory.
+
+**3. Increase `PILOT_DEBOUNCE_AFTER` to reduce push context churn**
+
+Frequent push cycles mean the old push context must remain in memory until all in-flight workers finish with it before GC can collect it. Higher debounce reduces the overlap between successive push contexts, lowering peak memory.
+
+---
+
 ## Recommended Grafana Dashboard Panels
 
 A minimal istiod monitoring dashboard should include these panels in order of importance:
@@ -401,8 +706,10 @@ Row 4: Resources
 | **Protocol** | xDS is a persistent gRPC subscription model — push, not poll |
 | **Pipeline** | Debounce → context build → queue → per-proxy delta → send → ACK/NACK |
 | **Performance** | Delta xDS + `Sidecar` scoping + debounce batching are the three pillars |
-| **CPU drivers** | Service count, `EnvoyFilter` breadth, lack of scoping, high debounce frequency |
+| **CPU drivers** | Push context rebuild (🔴 High) and certificate issuance (🔴 High) are the two dominant costs |
+| **Memory drivers** | Informer cache (🔴 High) and push context size (🔴 High) scale with cluster and service count |
 | **Push slowdowns** | Context build time, queue depth, serialization size, NACK rate — each has a distinct fix |
 | **Scale limits** | ~5,000 services × 5,000 proxies with scoping; beyond that, shard |
 | **Shard trigger** | `pilot_proxy_convergence_time` p99 > 30s after scoping is in place |
 | **Top metric** | `pilot_proxy_convergence_time` — the only metric that captures the full user-visible latency |
+| **First fix, always** | Add `Sidecar` scoping — it reduces CPU, memory, push size, and convergence time simultaneously |
