@@ -49,7 +49,7 @@ graph TD
     F --> G[Push Queue]
     G --> H{Per-Proxy Push Worker}
     H --> I[Compute delta vs.<br/>last ACK'd version]
-    I --> J[Serialize xDS response]
+    I --> J[Serialize xDS push payload<br/>proto marshal the delta]
     J --> K[Send over gRPC stream]
     K --> L{Proxy Response}
     L -->|ACK| M[Record version,<br/>update convergence metrics]
@@ -122,7 +122,7 @@ The number of concurrent push workers is controlled by **`PILOT_PUSH_THROTTLE`**
 
 ### Stage 6: Serialization
 
-Workers serialize the delta into protobuf-encoded xDS responses ready to send over the wire.
+Workers marshal the computed delta into a protobuf-encoded payload ready to write to the gRPC stream. Note: the xDS protocol calls this message a `DiscoveryResponse` — a legacy name from when xDS was purely request/response. In istiod's push model, this is an outgoing *push*, not a reply to anything.
 
 | Resource | Intensity | What Makes It High |
 |----------|-----------|-------------------|
