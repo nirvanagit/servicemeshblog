@@ -62,10 +62,10 @@ graph TD
 
 Istiod uses Kubernetes shared informers to watch all relevant resources — Istio CRDs, Services, Endpoints, Namespaces, Pods, Secrets. The informer cache is an in-memory snapshot of Kubernetes state. Reads from it are O(1) and never hit the API server.
 
-| Resource | Intensity | Notes |
-|----------|-----------|-------|
+| Resource | Intensity | What Makes It High |
+|----------|-----------|-------------------|
 | CPU | 🟢 **Low** | O(1) reads; event dispatch is lightweight goroutine work |
-| Memory | 🔴 **High** | Full in-memory copy of all watched Kubernetes objects — scales with cluster size, not mesh size |
+| Memory | 🔴 **High** | istiod holds a full in-memory copy of every watched Kubernetes object (pods, services, endpoints, namespaces, secrets, Istio CRDs) for every namespace it watches. Each `Endpoints` object for a high-replica service alone can be tens of KB. A cluster with 10,000 pods, 1,000 services, and thousands of `Endpoints` objects pushes the informer cache to 500 MB–1 GB before any mesh config is loaded. |
 
 The memory cost here is often underestimated. A cluster with 10,000 pods, 1,000 services, and thousands of Endpoints objects can push the informer cache alone to 500 MB–1 GB.
 
@@ -76,10 +76,10 @@ Istiod does not push immediately on every change. It waits for a quiet window so
 - **`PILOT_DEBOUNCE_AFTER`** (default: `100ms`) — how long after the *last* event to wait before triggering a push
 - **`PILOT_DEBOUNCE_MAX`** (default: `10s`) — the maximum time istiod will keep delaying, even if events keep arriving
 
-| Resource | Intensity | Notes |
-|----------|-----------|-------|
+| Resource | Intensity | What Makes It High |
+|----------|-----------|-------------------|
 | CPU | 🟢 **Low** | Timer resets and event queuing; negligible compute |
-| Memory | 🟢 **Low** | Buffers only references to pending events, not full object copies |
+| Memory | 🟢 **Low** | Buffers only pointers to pending event objects, not copies; bounded by the debounce window |
 
 This is a deliberate trade-off: higher debounce values reduce push frequency (less CPU) but increase propagation latency (slower convergence).
 
@@ -93,10 +93,10 @@ This is the most CPU-intensive step. Istiod must re-evaluate all Istio configura
 - Expanding `Sidecar` scoping rules per namespace
 - Merging Envoy filter patches from `EnvoyFilter` resources
 
-| Resource | Intensity | Notes |
-|----------|-----------|-------|
-| CPU | 🔴 **High** | Full policy evaluation across all services × namespaces on every push cycle |
-| Memory | 🔴 **High** | The resulting push context holds the complete xDS model for the mesh; shared across all workers but large — often 1–4 GB at 5,000+ services |
+| Resource | Intensity | What Makes It High |
+|----------|-----------|-------------------|
+| CPU | 🔴 **High** | Every push cycle re-evaluates the full set of `VirtualService`, `DestinationRule`, `AuthorizationPolicy`, `PeerAuthentication`, and `EnvoyFilter` resources against all services and namespaces. A cluster-wide `EnvoyFilter` alone forces istiod to merge JSON patches against every proxy's config on every rebuild. The more services, policies, and unscoped `Sidecar` resources, the longer each rebuild takes — this is the dominant CPU consumer in large meshes. |
+| Memory | 🔴 **High** | The rebuilt push context is a fully materialized xDS object graph covering every service in scope: all clusters, routes, listeners, and endpoints. Without `Sidecar` scoping, this is the complete mesh config held in memory simultaneously — often 1–4 GB at 5,000+ services. Two consecutive push contexts coexist in memory during GC handoff, so peak allocation is up to 2×. |
 
 The cost scales with the number of services, namespaces, and policies — not with the number of proxies. This is important: a mesh with 5,000 services and 10 proxies is just as expensive to rebuild a context for as one with 5,000 proxies.
 
@@ -104,10 +104,10 @@ The cost scales with the number of services, namespaces, and policies — not wi
 
 After the push context is built, istiod enqueues a push job for every connected proxy that needs an update.
 
-| Resource | Intensity | Notes |
-|----------|-----------|-------|
+| Resource | Intensity | What Makes It High |
+|----------|-----------|-------------------|
 | CPU | 🟢 **Low** | Queue operations are O(1); no computation happens here |
-| Memory | 🟡 **Medium** | One queue entry per connected proxy per push cycle; at 10,000 proxies this is a non-trivial allocation |
+| Memory | 🟡 **Medium** | One queue entry per connected proxy per push cycle. At 10,000 proxies, the queue itself holds 10,000 structs simultaneously — not large per entry, but multiplied by push frequency it creates GC pressure. Grows if workers consume the queue slower than pushes arrive (queue backup). |
 
 ### Stage 5: Per-Proxy Delta Computation
 
@@ -115,19 +115,19 @@ A pool of workers picks jobs from the queue and computes what changed since each
 
 The number of concurrent push workers is controlled by **`PILOT_PUSH_THROTTLE`** (default: `100`).
 
-| Resource | Intensity | Notes |
-|----------|-----------|-------|
-| CPU | 🟡 **Medium** | Diff against last-ACK'd nonce per resource type; scales with delta size and throttle setting |
-| Memory | 🟡 **Medium** | istiod holds last-ACK'd version maps per proxy (one entry per xDS type per proxy); ~1–2 KB per proxy, totaling ~1–2 GB at 10,000 proxies |
+| Resource | Intensity | What Makes It High |
+|----------|-----------|-------------------|
+| CPU | 🟡 **Medium** | For each worker, istiod walks the shared push context and extracts the subset relevant to that proxy, then diffs it against the last-ACK'd version. Cost grows with `PILOT_PUSH_THROTTLE` (more concurrent workers) and delta size (more changes = larger diff). A full state-of-world push after a proxy restart is the worst case — no prior ACK'd state means sending the complete config, not just the delta. |
+| Memory | 🟡 **Medium** | istiod maintains a version map per proxy (one nonce per xDS type: LDS, RDS, CDS, EDS, NDS). Each entry is small (~1–2 KB), but at 10,000 proxies this totals 1–2 GB of persistent per-proxy state that is never freed while the proxy is connected. This memory does not shrink between push cycles. |
 
 ### Stage 6: Serialization
 
 Workers serialize the delta into protobuf-encoded xDS responses ready to send over the wire.
 
-| Resource | Intensity | Notes |
-|----------|-----------|-------|
-| CPU | 🟡 **Medium** | Protobuf marshaling is fast but not free; cost scales with response payload size |
-| Memory | 🟡 **Medium** | Serialized bytes held in memory per worker until flushed to gRPC; `PILOT_PUSH_THROTTLE` × max response size gives peak allocation |
+| Resource | Intensity | What Makes It High |
+|----------|-----------|-------------------|
+| CPU | 🟡 **Medium** | Protobuf marshaling scales directly with payload size. Without `Sidecar` scoping, each response encodes the full mesh config — hundreds of clusters, thousands of routes — which is CPU-intensive. With scoping, the same marshaling cost drops proportionally. A proxy restart triggering a full state-of-world push is the worst-case serialization event. |
+| Memory | 🟡 **Medium** | Each worker holds its fully serialized response byte slice in memory until the gRPC write completes. Peak allocation is `PILOT_PUSH_THROTTLE × response_size`. Without scoping: 100 workers × 20 MB = 2 GB held simultaneously just for in-flight serialized payloads. With scoping, the same 100 workers × 400 KB = 40 MB. |
 
 Without `Sidecar` scoping, each response can be 10–50 MB (full mesh config). With scoping, the same response is typically under 500 KB.
 
@@ -135,8 +135,8 @@ Without `Sidecar` scoping, each response can be 10–50 MB (full mesh config). W
 
 The serialized response is written to the proxy's persistent gRPC stream.
 
-| Resource | Intensity | Notes |
-|----------|-----------|-------|
+| Resource | Intensity | What Makes It High |
+|----------|-----------|-------------------|
 | CPU | 🟢 **Low** | Network I/O; gRPC handles framing and flow control |
 | Memory | 🟢 **Low** | gRPC manages its own send buffers independently of istiod's heap |
 
@@ -148,9 +148,9 @@ Istiod's built-in CA issues and rotates workload mTLS certificates (SVIDs) for e
 
 By default, certificates expire after 24 hours with rotation at 80% of TTL (~19.2 hours). At 10,000 proxies, this means istiod signs roughly one certificate every 7 seconds at steady state.
 
-| Resource | Intensity | Notes |
-|----------|-----------|-------|
-| CPU | 🔴 **High** | Each issuance is an asymmetric crypto operation (RSA-2048 or ECDSA P-256 signing); at scale, this is a continuous CPU tax |
+| Resource | Intensity | What Makes It High |
+|----------|-----------|-------------------|
+| CPU | 🔴 **High** | Every certificate issuance requires an asymmetric crypto signing operation. RSA-2048 signing takes ~1 ms per operation on modern hardware. At 10,000 proxies with a 24h TTL (rotation at 80% = ~19.2h), istiod signs one certificate every ~7 seconds continuously — amounting to roughly 500 signing operations per hour. Short TTLs compound this: a 1h TTL at 10,000 proxies means ~3 signings per second as a constant background load, on top of all xDS push work. |
 | Memory | 🟢 **Low** | Signing state is transient; the resulting certificate is small and handed off immediately |
 
 `PILOT_WORKLOAD_CERT_TTL` controls certificate lifetime. Longer TTL reduces rotation frequency and therefore CPU, at the cost of longer exposure windows if a private key is compromised.
@@ -159,8 +159,8 @@ By default, certificates expire after 24 hours with rotation at 80% of TTL (~19.
 
 After a proxy receives an xDS update, it responds with an ACK (config valid and applied) or NACK (config rejected, reason included). Istiod records the response and updates the proxy's version state.
 
-| Resource | Intensity | Notes |
-|----------|-----------|-------|
+| Resource | Intensity | What Makes It High |
+|----------|-----------|-------------------|
 | CPU | 🟢 **Low** | Map update per proxy per resource type |
 | Memory | 🟢 **Low** | Small update to existing per-proxy state already tracked in Stage 5 |
 
