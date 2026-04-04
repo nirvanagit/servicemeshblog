@@ -1,36 +1,48 @@
 /* Service Mesh Blog — Vibrant, clean theme */
 
 :root {
-  /* Override Hextra's primary color to a warmer, more energetic blue-indigo */
-  --primary-hue: 235;
-  --primary-saturation: 85%;
+  /* Override Hextra's primary color to blue */
+  --primary-hue: 217;
+  --primary-saturation: 91%;
   --primary-lightness: 60%;
 
   /* Accent for highlights */
-  --accent: #6366f1;
-  --accent-light: #818cf8;
+  --accent: #3b82f6;
+  --accent-light: #60a5fa;
+
+  /* Override all primary color scale directly to blue (Tailwind blue-*) */
+  --hx-color-primary-50: #dbeafe;
+  --hx-color-primary-100: #bfdbfe;
+  --hx-color-primary-200: #93c5fd;
+  --hx-color-primary-300: #60a5fa;
+  --hx-color-primary-400: #3b82f6;
+  --hx-color-primary-500: #2563eb;
+  --hx-color-primary-600: #1d4ed8;
+  --hx-color-primary-700: #1e40af;
+  --hx-color-primary-800: #1e3a8a;
+  --hx-color-primary-900: #172554;
 }
 
 /* ── Navbar: cleaner with subtle bottom border ── */
 .nav-container {
-  border-bottom: 1px solid rgba(99, 102, 241, 0.1);
+  border-bottom: 1px solid rgba(59, 130, 246, 0.1);
 }
 
-/* ── Site title: indigo accent ── */
+/* ── Site title: blue accent ── */
 .nav-container a[href="/"] {
   color: var(--accent) !important;
 }
 
 /* ── Hero headline: gradient text ── */
 .hextra-hero-headline {
-  background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 50%, #6366f1 100%);
+  background: linear-gradient(135deg, #1d4ed8 0%, #2563eb 50%, #3b82f6 100%);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
 }
 
 .dark .hextra-hero-headline {
-  background: linear-gradient(135deg, #818cf8 0%, #a78bfa 50%, #93c5fd 100%);
+  background: linear-gradient(135deg, #60a5fa 0%, #93c5fd 50%, #bfdbfe 100%);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
@@ -50,7 +62,7 @@
 }
 .hextra-card:hover {
   transform: translateY(-2px);
-  box-shadow: 0 8px 25px -5px rgba(99, 102, 241, 0.15);
+  box-shadow: 0 8px 25px -5px rgba(59, 130, 246, 0.15);
 }
 
 /* ── Blog post list: warmer link colors ── */
@@ -64,25 +76,25 @@ article a:hover h3 {
 /* ── Code blocks: softer background ── */
 pre {
   border-radius: 12px !important;
-  border: 1px solid rgba(99, 102, 241, 0.1) !important;
+  border: 1px solid rgba(59, 130, 246, 0.1) !important;
 }
 
 /* ── Inline code: tinted with accent ── */
 :not(pre) > code {
-  background: rgba(99, 102, 241, 0.08) !important;
-  color: #4f46e5 !important;
+  background: rgba(59, 130, 246, 0.08) !important;
+  color: #2563eb !important;
   padding: 2px 6px !important;
   border-radius: 5px !important;
   font-size: 0.88em !important;
 }
 .dark :not(pre) > code {
-  background: rgba(129, 140, 248, 0.15) !important;
-  color: #a5b4fc !important;
+  background: rgba(96, 165, 250, 0.15) !important;
+  color: #93c5fd !important;
 }
 
 /* ── Tables: cleaner with accent header ── */
 table th {
-  background: linear-gradient(135deg, #4f46e5, #6366f1) !important;
+  background: linear-gradient(135deg, #1d4ed8, #3b82f6) !important;
   color: white !important;
   font-weight: 600 !important;
   padding: 10px 14px !important;
@@ -97,26 +109,26 @@ table td {
   padding: 10px 14px !important;
 }
 table tr:hover td {
-  background: rgba(99, 102, 241, 0.04);
+  background: rgba(59, 130, 246, 0.04);
 }
 
 /* ── Blockquotes: accent left border ── */
 blockquote {
   border-left: 3px solid var(--accent) !important;
-  background: rgba(99, 102, 241, 0.04) !important;
+  background: rgba(59, 130, 246, 0.04) !important;
   border-radius: 0 8px 8px 0 !important;
   padding: 12px 16px !important;
 }
 .dark blockquote {
-  background: rgba(99, 102, 241, 0.08) !important;
+  background: rgba(59, 130, 246, 0.08) !important;
 }
 
-/* ── Tag pills on category pages ── */
-.hx\:bg-primary-50 {
-  background-color: rgba(99, 102, 241, 0.08) !important;
+/* ── Tag pills on category/blog pages ── */
+[class*="bg-primary-50"] {
+  background-color: rgba(59, 130, 246, 0.08) !important;
 }
-.hx\:text-primary-700 {
-  color: #4f46e5 !important;
+[class*="text-primary-700"] {
+  color: #2563eb !important;
 }
 
 /* ── Scrollbar (webkit) ── */
@@ -127,11 +139,11 @@ blockquote {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: rgba(99, 102, 241, 0.2);
+  background: rgba(59, 130, 246, 0.2);
   border-radius: 3px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(99, 102, 241, 0.4);
+  background: rgba(59, 130, 246, 0.4);
 }
 
 /* ── Smooth page transitions ── */
@@ -145,7 +157,7 @@ main {
 
 /* ── Footer: subtle ── */
 footer {
-  border-top: 1px solid rgba(99, 102, 241, 0.08) !important;
+  border-top: 1px solid rgba(59, 130, 246, 0.08) !important;
 }
 
 /* ── TOC sidebar links ── */
@@ -155,5 +167,14 @@ footer {
 
 /* ── Selection color ── */
 ::selection {
-  background: rgba(99, 102, 241, 0.2);
+  background: rgba(59, 130, 246, 0.2);
+}
+
+/* ── Syntax highlighting: replace purple/violet chroma colors with blue ── */
+/* #c6a0f6 (mauve/purple) → #60a5fa (blue-400) — affects keywords, tags (e.g. RequestAuthentication) */
+.chroma .k,
+.chroma .kp,
+.chroma .kr,
+.chroma .nt {
+  color: #60a5fa !important;
 }
