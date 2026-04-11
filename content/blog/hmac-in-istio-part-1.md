@@ -31,22 +31,45 @@ HMAC combines three core components:
 
 ### The Algorithm
 
-HMAC follows the standard defined in RFC 2104:
+HMAC follows the standard defined in [RFC 2104](https://tools.ietf.org/html/rfc2104):
 
 ```
-HMAC(K, M) = H((K ⊕ opad) || H((K ⊕ ipad) || M))
+HMAC(K,M) = H((K' XOR opad) || H((K' XOR ipad) || M))
 ```
+
+Where **K'** is the key padded or truncated to the hash function's block size:
+- If `len(K) > blocksize`: K' = H(K)
+- If `len(K) ≤ blocksize`: K' = K || zeros (zero-padded to blocksize)
 
 Where:
-- `K` = secret key
+- `K`, `K'` = secret key (K' is K padded/truncated to hash block size)
 - `M` = message
-- `H` = hash function (SHA-256, SHA-512, etc.)
-- `⊕` = XOR (bitwise exclusive OR operation)
-- `ipad` = inner padding constant (byte 0x36 repeated)
-- `opad` = outer padding constant (byte 0x5C repeated)
-- `||` = concatenation (joining together)
+- `H` = hash function (SHA-256 = 64-byte blocks, SHA-512 = 128-byte blocks, etc.)
+- `XOR` = bitwise exclusive OR operation (result is 1 only if bits differ)
+- `ipad` = inner padding constant (byte 0x36 repeated for entire block size)
+- `opad` = outer padding constant (byte 0x5C repeated for entire block size)
+- `||` = concatenation (joining data together)
 
 This looks complex, but the concept is simple: apply the hash function twice with different key padding to prevent certain attacks.
+
+**What does XOR mean?**
+
+XOR (exclusive OR) is a bitwise operation that combines each byte of the key with each byte of the padding:
+
+```
+Example: Combine one byte of key with ipad
+Key byte:     0x7A (binary: 0111 1010)
+ipad byte:    0x36 (binary: 0011 0110)
+Result:       0x4C (binary: 0100 1100)
+
+XOR rule: result bit is 1 only if input bits are different
+  0 XOR 0 = 0
+  0 XOR 1 = 1
+  1 XOR 0 = 1
+  1 XOR 1 = 0
+```
+
+In practice, this is done for every byte in the key simultaneously, producing a padded key that's "mixed" with the padding constants.
 
 ### Concrete Example
 
@@ -69,8 +92,8 @@ Pad key to 32 bytes:
 **Step 2: Compute Inner Hash**
 
 ```
-Create inner-padded key by XOR with ipad (0x36):
-padded_key ⊕ ipad = 32 bytes (each byte XORed with 0x36)
+Create inner-padded key by XORing with ipad (0x36):
+padded_key XOR ipad = 32 bytes (each byte XORed with 0x36)
 
 Concatenate with message:
 (padded_key ⊕ ipad) || "Hello Bob, transfer $100"
@@ -83,8 +106,8 @@ H_inner = SHA256((padded_key ⊕ ipad) || message)
 **Step 3: Compute Outer Hash**
 
 ```
-Create outer-padded key by XOR with opad (0x5C):
-padded_key ⊕ opad = 32 bytes (each byte XORed with 0x5C)
+Create outer-padded key by XORing with opad (0x5C):
+padded_key XOR opad = 32 bytes (each byte XORed with 0x5C)
 
 Concatenate with inner hash result:
 (padded_key ⊕ opad) || H_inner
@@ -186,15 +209,15 @@ Attack: Works because hash functions process data sequentially
 The outer hash with a different padding breaks this:
 
 ```
-HMAC: H(opad || H(ipad || message))
-Even if attacker knows H(ipad || message), they can't compute
-the outer hash without knowing the key for opad-padding
+HMAC: H((K' XOR opad) || H((K' XOR ipad) || message))
+Even if attacker knows H((K' XOR ipad) || message), they can't compute
+the outer hash without knowing K' for opad-padding
 Attack prevented ✓
 ```
 
 ### 2. Key Exposure Prevention
 
-Using different paddings (ipad vs opad) ensures:
+Using different XOR patterns (ipad vs opad) ensures:
 - The key is never directly fed to the hash function
 - If the hash function has certain weaknesses, the HMAC remains secure
 - The key is "hidden" inside the padded values
