@@ -422,24 +422,24 @@ spec:
 
 #### How It Works at Gateway
 
-```
-Request arrives at ingressgateway pod:
-   ├─ TLS handshake at gateway listener (port 443)
-   ├─ Request headers extracted by Envoy
-   │  ├─ Authorization: Bearer token
-   │  ├─ X-Admin: true ← Attacker injected
-   │  └─ Content-Type: application/json
-   │
-   ├─ AuthorizationPolicy evaluation (at gateway level)
-   │  ├─ Check: Does X-Admin header exist?
-   │  │  └─ YES → Rule matches
-   │  │
-   │  ├─ Action: DENY (rule matched)
-   │  │
-   │  └─ Stop: Do not forward to backend service
-   │
-   └─ Response: 403 Forbidden
-      └─ Request never reaches api-service
+```mermaid
+graph TD
+    A["Request arrives at Gateway<br/>POST /api/users<br/>X-Admin: true ← Injected!"] --> B["TLS Handshake<br/>at ingressgateway:443"]
+    B --> C["Extract Headers<br/>X-Admin, Authorization, etc."]
+    C --> D["AuthorizationPolicy<br/>Evaluation at Gateway"]
+    D --> E{"Check: X-Admin<br/>header exists?"}
+    E -->|YES| F["Rule Matched<br/>Action: DENY"]
+    E -->|NO| G["Continue to Allow Rules"]
+    F --> H["🚫 Reject Request<br/>403 Forbidden"]
+    H --> I["⛔ Never reaches<br/>api-service"]
+    
+    style A fill:#ff6b6b
+    style F fill:#ff6b6b
+    style H fill:#ff6b6b
+    style I fill:#ff6b6b
+    style B fill:#4ecdc4
+    style C fill:#4ecdc4
+    style D fill:#4ecdc4
 ```
 
 ```
@@ -575,34 +575,35 @@ spec:
 
 #### How It Works at Gateway
 
-```
-Request arrives at ingressgateway with JWT token:
-   ├─ TLS handshake at gateway
-   ├─ JWT extracted from Authorization header
-   │
-   ├─ RequestAuthentication (Signature Verification)
-   │  ├─ Fetch JWKS from issuer
-   │  ├─ Extract: header.payload.signature
-   │  ├─ Recompute: HMAC-SHA256(public_key, header.payload)
-   │  │
-   │  ├─ If modified payload:
-   │  │  ├─ Original: {"role":"viewer","org":"acme-corp"}
-   │  │  ├─ Modified: {"role":"admin","org":"evil-corp"}
-   │  │  ├─ New HMAC: xyz789
-   │  │  ├─ Old HMAC: abc123
-   │  │  └─ MISMATCH → REJECT (stop here, don't proceed)
-   │  │
-   │  └─ If signature valid: Extract claims
-   │
-   ├─ AuthorizationPolicy (Claims Validation) - only if signature valid
-   │  ├─ Check: role in ["viewer", "editor"]?
-   │  │  └─ Modified role="admin" NOT in list → DENY
-   │  ├─ Check: org == "acme-corp"?
-   │  │  └─ Modified org="evil-corp" NOT match → DENY
-   │  └─ Attack blocked even if signature somehow passed
-   │
-   └─ Response: 403 Forbidden
-      └─ Request rejected at gateway, never reaches backend
+```mermaid
+graph TD
+    A["Request with JWT Token<br/>role: admin, org: evil-corp<br/>Signature: abc123"] --> B["TLS Handshake<br/>at Gateway"]
+    B --> C["Extract JWT<br/>from Authorization Header"]
+    C --> D["RequestAuthentication<br/>Signature Verification"]
+    D --> E["Fetch JWKS<br/>from Issuer"]
+    E --> F["Extract Claims<br/>role: admin<br/>org: evil-corp"]
+    F --> G["Recompute HMAC-SHA256<br/>public_key, modified_payload"]
+    G --> H{"Computed HMAC<br/>== Received HMAC?<br/>xyz789 == abc123?"}
+    H -->|NO| I["🚫 REJECT<br/>Signature Mismatch"]
+    H -->|YES| J["Extract Claims<br/>for Authorization"]
+    I --> K["403 Forbidden<br/>Stop at Gateway"]
+    J --> L["AuthorizationPolicy<br/>Claims Validation"]
+    L --> M{"role in<br/>[viewer,<br/>editor]?"}
+    M -->|NO| N["🚫 DENY<br/>Privilege Escalation"]
+    M -->|YES| O{"org ==<br/>acme-corp?"}
+    O -->|NO| P["🚫 DENY<br/>Wrong Organization"]
+    O -->|YES| Q["✓ Route to Backend"]
+    N --> K
+    P --> K
+    
+    style A fill:#ff6b6b
+    style I fill:#ff6b6b
+    style N fill:#ff6b6b
+    style P fill:#ff6b6b
+    style K fill:#ff6b6b
+    style D fill:#4ecdc4
+    style L fill:#4ecdc4
+    style Q fill:#51cf66
 ```
 
 **Attack Description:**
@@ -780,34 +781,32 @@ spec:
 
 #### How It Works at Gateway
 
-```
-POST /api/transfer arrives at ingressgateway:
-   ├─ TLS handshake
-   ├─ Body extracted by Envoy
-   │
-   ├─ AuthorizationPolicy action: CUSTOM
-   │  └─ Forward to ext_authz provider (at gateway)
-   │
-   ├─ ext_authz server (running in istio-system namespace)
-   │  ├─ Receive CheckRequest with full body
-   │  ├─ Extract X-Request-Signature header
-   │  ├─ Compute HMAC-SHA256(secret_key, body)
-   │  │
-   │  ├─ Original amount=100:
-   │  │  └─ HMAC = abc123
-   │  │
-   │  ├─ Tampered amount=10000:
-   │  │  ├─ Compute HMAC = xyz789
-   │  │  ├─ Compare: xyz789 ≠ abc123
-   │  │  └─ MISMATCH → DENY
-   │  │
-   │  └─ Return CheckResponse.status = PERMISSION_DENIED
-   │
-   ├─ Envoy rejects request at gateway
-   │  └─ Never forwarded to payment-service
-   │
-   └─ Response: 403 Forbidden
-      └─ x-tampering-detected: true
+```mermaid
+graph TD
+    A["POST /api/transfer<br/>amount: 10000 ← Tampered!<br/>X-Request-Signature: sig_abc123"] --> B["TLS Handshake<br/>at Gateway"]
+    B --> C["AuthorizationPolicy<br/>action: CUSTOM"]
+    C --> D["Forward to ext_authz<br/>in istio-system"]
+    D --> E["ext_authz Server<br/>Receives CheckRequest"]
+    E --> F["Extract Body<br/>amount: 10000"]
+    F --> G["Extract Header<br/>X-Request-Signature: sig_abc123"]
+    G --> H["Compute HMAC-SHA256<br/>secret_key, body"]
+    H --> I["Original amount=100<br/>Expected HMAC = abc123"]
+    I --> J["Actual amount=10000<br/>Computed HMAC = xyz789"]
+    J --> K{"Signature Match?<br/>xyz789 == abc123?"}
+    K -->|NO| L["🚫 MISMATCH<br/>Body Tampered"]
+    K -->|YES| M["✓ Signature Valid<br/>Route to Service"]
+    L --> N["Return PERMISSION_DENIED"]
+    N --> O["Envoy Rejects<br/>at Gateway"]
+    O --> P["403 Forbidden<br/>x-tampering-detected: true"]
+    
+    style A fill:#ff6b6b
+    style L fill:#ff6b6b
+    style N fill:#ff6b6b
+    style P fill:#ff6b6b
+    style C fill:#4ecdc4
+    style D fill:#4ecdc4
+    style E fill:#4ecdc4
+    style M fill:#51cf66
 ```
 
 **Attack Description:**
@@ -1014,42 +1013,34 @@ spec:
 
 #### How It Works at Gateway
 
-```
-POST /api/payment arrives at ingressgateway:
-   ├─ TLS handshake
-   ├─ Request with X-Nonce and X-Timestamp extracted
-   │
-   ├─ AuthorizationPolicy action: CUSTOM
-   │  └─ Forward to replay-detection-authz provider
-   │
-   ├─ ext_authz server (at gateway namespace)
-   │  ├─ Extract: nonce=nonce_12345, timestamp=1712859600
-   │  │
-   │  ├─ Check 1: Timestamp freshness
-   │  │  ├─ Now: 1712860000
-   │  │  ├─ Diff: 400 seconds < 5 minutes → OK
-   │  │  └─ Continue
-   │  │
-   │  ├─ Check 2: Nonce uniqueness (in Redis)
-   │  │  ├─ First request:
-   │  │  │  ├─ redis.SETNX("nonce:nonce_12345", requestID)
-   │  │  │  └─ Success → ALLOW
-   │  │  │
-   │  │  └─ Second request (replayed):
-   │  │     ├─ redis.SETNX("nonce:nonce_12345", requestID)
-   │  │     └─ Fails (key exists) → DENY
-   │  │
-   │  └─ Return CheckResponse
-   │
-   ├─ First request:
-   │  ├─ Nonce doesn't exist in Redis
-   │  ├─ Stored in Redis with 3600s TTL
-   │  └─ ✓ ALLOW → Forward to transaction-service
-   │
-   └─ Replayed request (same nonce):
-      ├─ Nonce already in Redis
-      ├─ DENY at gateway
-      └─ ✗ 403 Forbidden (replay attack detected)
+```mermaid
+graph TD
+    A1["First Request<br/>X-Nonce: nonce_12345<br/>X-Timestamp: 1712859600"] --> B["TLS Handshake<br/>at Gateway"]
+    B --> C["AuthorizationPolicy<br/>action: CUSTOM"]
+    C --> D["ext_authz: Replay Detection"]
+    D --> E1["Check 1: Timestamp<br/>Freshness"]
+    E1 --> F1{"Now - Timestamp<br/>< 5 minutes?"}
+    F1 -->|YES| G1["Check 2: Nonce<br/>Uniqueness"]
+    F1 -->|NO| H1["🚫 DENY<br/>Request Too Old"]
+    G1 --> I1{"redis.SETNX<br/>nonce:12345<br/>Success?"}
+    I1 -->|YES| J1["✓ Nonce Stored<br/>in Redis<br/>TTL: 3600s"]
+    I1 -->|NO| K1["🚫 DENY<br/>Nonce Already Used"]
+    J1 --> L1["✓ ALLOW<br/>Route to Service"]
+    
+    A2["Replayed Request<br/>Same Nonce: nonce_12345<br/>Same Timestamp"] --> B
+    K1 --> M["403 Forbidden<br/>Replay Attack Detected"]
+    H1 --> M
+    
+    style A1 fill:#51cf66
+    style L1 fill:#51cf66
+    style A2 fill:#ff6b6b
+    style K1 fill:#ff6b6b
+    style H1 fill:#ff6b6b
+    style M fill:#ff6b6b
+    style C fill:#4ecdc4
+    style D fill:#4ecdc4
+    style E1 fill:#4ecdc4
+    style G1 fill:#4ecdc4
 ```
 
 **Attack Description:**
