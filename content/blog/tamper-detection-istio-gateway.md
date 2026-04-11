@@ -347,8 +347,105 @@ func Authorize(ctx context.Context, req *authv3.CheckRequest) (*authv3.CheckResp
 
 ### Scenario 1: Header Injection Attack
 
+#### Gateway Enforcement Configuration
+
+```yaml
+# Step 1: Define Gateway
+apiVersion: networking.istio.io/v1beta1
+kind: Gateway
+metadata:
+  name: secure-gateway
+  namespace: istio-system
+spec:
+  selector:
+    istio: ingressgateway
+  servers:
+  - port:
+      number: 443
+      name: https
+      protocol: HTTPS
+    tls:
+      mode: SIMPLE
+      credentialName: gateway-cert
+    hosts:
+    - "api.example.com"
+
+---
+# Step 2: Route traffic
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: api-routes
+  namespace: istio-system
+spec:
+  hosts:
+  - "api.example.com"
+  gateways:
+  - secure-gateway
+  http:
+  - route:
+    - destination:
+        host: api-service
+        port:
+          number: 8080
+
+---
+# Step 3: Block malicious headers AT GATEWAY
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: block-header-injection
+  namespace: istio-system
+spec:
+  selector:
+    matchLabels:
+      istio: ingressgateway  # Applies to gateway, not services
+  action: DENY
+  rules:
+  # DENY any request with X-Admin header
+  - when:
+    - key: request.headers[x-admin]
+      values: ["*"]
+  # DENY any request with X-Bypass-Auth header
+  - when:
+    - key: request.headers[x-bypass-auth]
+      values: ["*"]
+  # DENY any request with X-Privilege header
+  - when:
+    - key: request.headers[x-privilege]
+      values: ["*"]
+  # DENY any request with X-Impersonate header
+  - when:
+    - key: request.headers[x-impersonate]
+      values: ["*"]
+```
+
+#### How It Works at Gateway
+
+```
+Request arrives at ingressgateway pod:
+   ├─ TLS handshake at gateway listener (port 443)
+   ├─ Request headers extracted by Envoy
+   │  ├─ Authorization: Bearer token
+   │  ├─ X-Admin: true ← Attacker injected
+   │  └─ Content-Type: application/json
+   │
+   ├─ AuthorizationPolicy evaluation (at gateway level)
+   │  ├─ Check: Does X-Admin header exist?
+   │  │  └─ YES → Rule matches
+   │  │
+   │  ├─ Action: DENY (rule matched)
+   │  │
+   │  └─ Stop: Do not forward to backend service
+   │
+   └─ Response: 403 Forbidden
+      └─ Request never reaches api-service
+```
+
 ```
 Legitimate request:
+
+POST /api/users HTTP/1.1
 POST /api/users HTTP/1.1
 Authorization: Bearer eyJhbGc...
 Content-Type: application/json
@@ -383,6 +480,132 @@ Prevention: ✓ Injected header rejected
 ```
 
 ### Scenario 2: JWT Token Modification
+
+#### Gateway Enforcement Configuration
+
+```yaml
+# Step 1: Define Gateway
+apiVersion: networking.istio.io/v1beta1
+kind: Gateway
+metadata:
+  name: jwt-gateway
+  namespace: istio-system
+spec:
+  selector:
+    istio: ingressgateway
+  servers:
+  - port:
+      number: 443
+      name: https
+      protocol: HTTPS
+    tls:
+      mode: SIMPLE
+      credentialName: gateway-cert
+    hosts:
+    - "api.example.com"
+
+---
+# Step 2: Validate JWT signature at Gateway
+apiVersion: security.istio.io/v1beta1
+kind: RequestAuthentication
+metadata:
+  name: jwt-signature-validation
+  namespace: istio-system
+spec:
+  selector:
+    matchLabels:
+      istio: ingressgateway  # Applies to gateway
+  jwtRules:
+  - issuer: "https://auth.example.com"
+    jwksUri: "https://auth.example.com/.well-known/jwks.json"
+    audiences:
+    - "api.example.com"
+    # Gateway will verify signature before forwarding
+
+---
+# Step 3: Enforce authorization with claims validation at Gateway
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: jwt-claims-validation
+  namespace: istio-system
+spec:
+  selector:
+    matchLabels:
+      istio: ingressgateway  # Applies only to gateway
+  action: ALLOW
+  rules:
+  # Only allow authenticated requests with valid signature
+  - from:
+    - source:
+        requestPrincipals: ["https://auth.example.com/*"]
+    to:
+    - operation:
+        paths: ["/api/v1/*"]
+    when:
+    # Validate claims extracted from JWT
+    - key: request.auth.claims[role]
+      values: ["viewer", "editor"]  # Only these roles allowed
+    - key: request.auth.claims[org]
+      values: ["acme-corp"]  # Only this organization
+    - key: request.auth.claims[aud]
+      values: ["api.example.com"]  # Correct audience
+    - key: request.auth.claims[exp]
+      values: ["*"]  # Token must have expiry claim
+
+---
+# Step 4: Route to backend
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: api-routes
+  namespace: istio-system
+spec:
+  hosts:
+  - "api.example.com"
+  gateways:
+  - jwt-gateway
+  http:
+  - route:
+    - destination:
+        host: api-service
+        port:
+          number: 8080
+```
+
+#### How It Works at Gateway
+
+```
+Request arrives at ingressgateway with JWT token:
+   ├─ TLS handshake at gateway
+   ├─ JWT extracted from Authorization header
+   │
+   ├─ RequestAuthentication (Signature Verification)
+   │  ├─ Fetch JWKS from issuer
+   │  ├─ Extract: header.payload.signature
+   │  ├─ Recompute: HMAC-SHA256(public_key, header.payload)
+   │  │
+   │  ├─ If modified payload:
+   │  │  ├─ Original: {"role":"viewer","org":"acme-corp"}
+   │  │  ├─ Modified: {"role":"admin","org":"evil-corp"}
+   │  │  ├─ New HMAC: xyz789
+   │  │  ├─ Old HMAC: abc123
+   │  │  └─ MISMATCH → REJECT (stop here, don't proceed)
+   │  │
+   │  └─ If signature valid: Extract claims
+   │
+   ├─ AuthorizationPolicy (Claims Validation) - only if signature valid
+   │  ├─ Check: role in ["viewer", "editor"]?
+   │  │  └─ Modified role="admin" NOT in list → DENY
+   │  ├─ Check: org == "acme-corp"?
+   │  │  └─ Modified org="evil-corp" NOT match → DENY
+   │  └─ Attack blocked even if signature somehow passed
+   │
+   └─ Response: 403 Forbidden
+      └─ Request rejected at gateway, never reaches backend
+```
+
+**Attack Description:**
 
 ```
 Original token payload:
@@ -425,6 +648,170 @@ Why can't attacker forge new signature?
 
 ### Scenario 3: Request Body Tampering
 
+#### Gateway Enforcement Configuration
+
+```yaml
+# Step 1: Define Gateway
+apiVersion: networking.istio.io/v1beta1
+kind: Gateway
+metadata:
+  name: payment-gateway
+  namespace: istio-system
+spec:
+  selector:
+    istio: ingressgateway
+  servers:
+  - port:
+      number: 443
+      name: https
+      protocol: HTTPS
+    tls:
+      mode: SIMPLE
+      credentialName: gateway-cert
+    hosts:
+    - "api.example.com"
+
+---
+# Step 2: Configure custom ext_authz provider in mesh config
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: istio
+  namespace: istio-system
+data:
+  mesh: |
+    extensionProviders:
+    - name: body-tampering-authz
+      envoyExtAuthzGrpc:
+        service: body-authz.istio-system.svc.cluster.local
+        port: 9000
+        timeout: 2s
+        headersToDownstreamOnDeny:
+        - x-tampering-detected
+        headersToDownstreamOnAllow:
+        - x-body-verified
+
+---
+# Step 3: Deploy ext_authz server at gateway namespace
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: body-authz-server
+  namespace: istio-system
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: body-authz
+  template:
+    metadata:
+      labels:
+        app: body-authz
+    spec:
+      containers:
+      - name: authz
+        image: body-tampering-authz:latest
+        ports:
+        - containerPort: 9000
+        env:
+        - name: PAYMENT_SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: payment-secret
+              key: secret-key
+
+---
+# Step 4: Service for ext_authz
+apiVersion: v1
+kind: Service
+metadata:
+  name: body-authz
+  namespace: istio-system
+spec:
+  selector:
+    app: body-authz
+  ports:
+  - port: 9000
+    targetPort: 9000
+
+---
+# Step 5: Enforce custom body validation at gateway
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: body-tampering-protection
+  namespace: istio-system
+spec:
+  selector:
+    matchLabels:
+      istio: ingressgateway  # Applies to gateway
+  action: CUSTOM
+  provider:
+    name: body-tampering-authz
+  rules:
+  - to:
+    - operation:
+        methods: ["POST"]
+        paths: ["/api/transfer", "/api/payment"]
+        # Any POST to payment endpoints goes through ext_authz
+
+---
+# Step 6: Route to backend
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: payment-routes
+  namespace: istio-system
+spec:
+  hosts:
+  - "api.example.com"
+  gateways:
+  - payment-gateway
+  http:
+  - match:
+    - uri:
+        prefix: "/api/payment"
+    route:
+    - destination:
+        host: payment-service
+        port:
+          number: 8080
+```
+
+#### How It Works at Gateway
+
+```
+POST /api/transfer arrives at ingressgateway:
+   ├─ TLS handshake
+   ├─ Body extracted by Envoy
+   │
+   ├─ AuthorizationPolicy action: CUSTOM
+   │  └─ Forward to ext_authz provider (at gateway)
+   │
+   ├─ ext_authz server (running in istio-system namespace)
+   │  ├─ Receive CheckRequest with full body
+   │  ├─ Extract X-Request-Signature header
+   │  ├─ Compute HMAC-SHA256(secret_key, body)
+   │  │
+   │  ├─ Original amount=100:
+   │  │  └─ HMAC = abc123
+   │  │
+   │  ├─ Tampered amount=10000:
+   │  │  ├─ Compute HMAC = xyz789
+   │  │  ├─ Compare: xyz789 ≠ abc123
+   │  │  └─ MISMATCH → DENY
+   │  │
+   │  └─ Return CheckResponse.status = PERMISSION_DENIED
+   │
+   ├─ Envoy rejects request at gateway
+   │  └─ Never forwarded to payment-service
+   │
+   └─ Response: 403 Forbidden
+      └─ x-tampering-detected: true
+```
+
+**Attack Description:**
+
 ```
 Original request:
 POST /api/transfer HTTP/1.1
@@ -462,6 +849,210 @@ Or if signature missing:
 ```
 
 ### Scenario 4: Replay Attack
+
+#### Gateway Enforcement Configuration
+
+```yaml
+# Step 1: Define Gateway
+apiVersion: networking.istio.io/v1beta1
+kind: Gateway
+metadata:
+  name: replay-protected-gateway
+  namespace: istio-system
+spec:
+  selector:
+    istio: ingressgateway
+  servers:
+  - port:
+      number: 443
+      name: https
+      protocol: HTTPS
+    tls:
+      mode: SIMPLE
+      credentialName: gateway-cert
+    hosts:
+    - "api.example.com"
+
+---
+# Step 2: Deploy Redis for nonce storage (shared state)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis-cache
+  namespace: istio-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redis
+  template:
+    metadata:
+      labels:
+        app: redis
+    spec:
+      containers:
+      - name: redis
+        image: redis:7-alpine
+        ports:
+        - containerPort: 6379
+        command: ["redis-server"]
+        args: ["--appendonly", "yes"]  # Persistence
+
+---
+# Step 3: Redis Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis-cache
+  namespace: istio-system
+spec:
+  selector:
+    app: redis
+  ports:
+  - port: 6379
+
+---
+# Step 4: Configure ext_authz provider in mesh config
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: istio
+  namespace: istio-system
+data:
+  mesh: |
+    extensionProviders:
+    - name: replay-detection-authz
+      envoyExtAuthzGrpc:
+        service: replay-authz.istio-system.svc.cluster.local
+        port: 9000
+        timeout: 2s
+
+---
+# Step 5: Deploy replay detection ext_authz server
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: replay-detection-authz
+  namespace: istio-system
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: replay-authz
+  template:
+    metadata:
+      labels:
+        app: replay-authz
+    spec:
+      containers:
+      - name: authz
+        image: replay-detection-authz:latest
+        ports:
+        - containerPort: 9000
+        env:
+        - name: REDIS_URL
+          value: "redis://redis-cache:6379"
+        - name: NONCE_TTL_SECONDS
+          value: "3600"
+
+---
+# Step 6: Service for ext_authz
+apiVersion: v1
+kind: Service
+metadata:
+  name: replay-authz
+  namespace: istio-system
+spec:
+  selector:
+    app: replay-authz
+  ports:
+  - port: 9000
+
+---
+# Step 7: Enforce replay protection at gateway
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: replay-attack-protection
+  namespace: istio-system
+spec:
+  selector:
+    matchLabels:
+      istio: ingressgateway  # Applies to gateway
+  action: CUSTOM
+  provider:
+    name: replay-detection-authz
+  rules:
+  - to:
+    - operation:
+        methods: ["POST"]
+        paths: ["/api/transfer", "/api/payment"]
+        # All mutations go through replay detection
+
+---
+# Step 8: Route to backend
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: transaction-routes
+  namespace: istio-system
+spec:
+  hosts:
+  - "api.example.com"
+  gateways:
+  - replay-protected-gateway
+  http:
+  - match:
+    - uri:
+        prefix: "/api"
+    route:
+    - destination:
+        host: transaction-service
+        port:
+          number: 8080
+```
+
+#### How It Works at Gateway
+
+```
+POST /api/payment arrives at ingressgateway:
+   ├─ TLS handshake
+   ├─ Request with X-Nonce and X-Timestamp extracted
+   │
+   ├─ AuthorizationPolicy action: CUSTOM
+   │  └─ Forward to replay-detection-authz provider
+   │
+   ├─ ext_authz server (at gateway namespace)
+   │  ├─ Extract: nonce=nonce_12345, timestamp=1712859600
+   │  │
+   │  ├─ Check 1: Timestamp freshness
+   │  │  ├─ Now: 1712860000
+   │  │  ├─ Diff: 400 seconds < 5 minutes → OK
+   │  │  └─ Continue
+   │  │
+   │  ├─ Check 2: Nonce uniqueness (in Redis)
+   │  │  ├─ First request:
+   │  │  │  ├─ redis.SETNX("nonce:nonce_12345", requestID)
+   │  │  │  └─ Success → ALLOW
+   │  │  │
+   │  │  └─ Second request (replayed):
+   │  │     ├─ redis.SETNX("nonce:nonce_12345", requestID)
+   │  │     └─ Fails (key exists) → DENY
+   │  │
+   │  └─ Return CheckResponse
+   │
+   ├─ First request:
+   │  ├─ Nonce doesn't exist in Redis
+   │  ├─ Stored in Redis with 3600s TTL
+   │  └─ ✓ ALLOW → Forward to transaction-service
+   │
+   └─ Replayed request (same nonce):
+      ├─ Nonce already in Redis
+      ├─ DENY at gateway
+      └─ ✗ 403 Forbidden (replay attack detected)
+```
+
+**Attack Description:**
 
 ```
 Attacker captures valid request:
