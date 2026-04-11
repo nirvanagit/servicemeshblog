@@ -279,16 +279,90 @@ Digital Signature (public-key cryptography):
 └─ Example: JWT tokens, digital certificates
 ```
 
+**Why is HMAC fast and Digital Signatures slow?**
+
+HMAC uses **hash functions** (like SHA-256), which are designed for speed—they're simple sequential operations combining data with XOR. Both parties have the same secret, so no complex math is needed.
+
+Digital Signatures use **public-key cryptography** (RSA, ECDSA), which relies on mathematically hard problems (factoring huge numbers, elliptic curve discrete logarithms). Both signing and verification require expensive operations:
+- **RSA**: modular exponentiation with massive numbers
+- **ECDSA**: elliptic curve scalar multiplication
+- These are 100-1000x slower than hash functions
+
+The tradeoff: HMAC is lightweight and fast, but only works between two parties who share the secret. Signatures are slower but prove identity publicly—anyone can verify your signature using your public key.
+
 **Summary table:**
 
 | Feature | HMAC | Digital Signature |
 |---------|------|-------------------|
 | Keys | Symmetric (shared secret) | Asymmetric (public/private) |
 | Verification audience | Sender + receiver only | Anyone (public proof) |
-| Speed | Fast | Slow |
+| Speed | Fast (hash-based) | Slow (public-key math) |
 | Proves sender identity | To receiver only | To everyone |
 | Non-repudiation | No | Yes |
 | Typical use | Point-to-point security | Public authentication |
+
+---
+
+## How is the HMAC Secret Key Shared?
+
+This is a critical question: **if both client and server need the same secret key, how do they share it securely?** There are two main approaches:
+
+### 1. Pre-Shared Key (PSK) - Out-of-Band Distribution
+
+For simple use cases (API authentication, webhook signing), the secret is shared beforehand:
+
+```
+Setup (before any communication):
+1. Server generates a secret key: "api_key_12345"
+2. Server gives it to the client through a secure channel:
+   - In person
+   - Email with encryption
+   - Secure portal
+   - Hardcoded in environment variables
+
+Once shared:
+3. Client and server both have the same secret
+4. Client computes HMAC using the secret
+5. Server verifies HMAC using the same secret
+
+Example: AWS API authentication
+- AWS generates a secret access key
+- You store it in your ~/.aws/credentials file
+- Your SDK uses it to sign requests with HMAC
+- AWS verifies the signature
+```
+
+**Problem**: If the secret is compromised, all requests can be forged.
+
+### 2. TLS Handshake - Dynamic Key Derivation (More Secure)
+
+For encrypted connections (HTTPS, mTLS), the secret is **derived during the handshake** instead of being pre-shared:
+
+```
+TLS Handshake Process:
+1. Client and server don't know a shared secret yet
+2. They perform a key exchange (Diffie-Hellman, ECDH):
+   - Each side generates a random number
+   - They exchange public values (not secrets)
+   - Both compute the same "shared secret" mathematically
+   
+3. Derive the session key:
+   session_key = KDF(shared_secret, nonces, other_params)
+   - Both sides compute the same session_key
+   - It's unique to this connection
+   - It's never transmitted
+   
+4. Use session_key for HMAC:
+   HMAC = HMAC-SHA256(session_key, data)
+   
+Benefits:
+- No pre-shared secret needed
+- Key is unique per connection
+- If one key is compromised, only that session is affected
+- Forward secrecy: old connections stay secure even if current key is stolen
+```
+
+**Istio's Approach**: Uses TLS handshakes with mTLS, so session keys are derived automatically. You don't manually manage secrets.
 
 ---
 
