@@ -1,11 +1,11 @@
 ---
-title: "HMAC in Istio: Part 1 - Understanding HMAC and Its Role in mTLS"
+title: "HMAC in Istio: Series 1/2 - Understanding HMAC and Its Role in mTLS"
 date: 2026-04-10
 draft: false
 tags: ["hmac", "cryptography", "mtls", "security", "tls"]
 categories: ["security"]
 author: "Service Mesh Blog"
-description: "Part 1 of our HMAC series: Learn how HMAC (Hash-Based Message Authentication Code) works and how Istio uses it to guarantee message authenticity and integrity in mTLS connections."
+description: "Series 1/2 of our HMAC series: Learn how HMAC (Hash-Based Message Authentication Code) works and how Istio uses it to guarantee message authenticity and integrity in mTLS connections."
 ShowToc: true
 TocOpen: false
 ---
@@ -577,7 +577,7 @@ The attacker cannot compute a valid HMAC because they don't have the session key
 - **Istio uses HMAC in TLS**: Every mTLS record includes HMAC for authentication
 - **Automatic enforcement**: Envoy proxies verify HMAC on every message; tampering is immediately detected
 
-In **Part 2** of this series, we'll explore advanced HMAC scenarios in Istio:
+In **Part 2/2** of this series, we'll explore advanced HMAC scenarios in Istio:
 - How HMAC protects against specific attack types
 - Debugging HMAC failures in Istio
 - Performance implications of HMAC in high-traffic environments
