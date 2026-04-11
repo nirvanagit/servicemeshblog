@@ -1,0 +1,8 @@
+{{- $viz := .Get "name" -}}
+{{- $width := .Get "width" | default "100%" -}}
+{{- $height := .Get "height" | default "600" -}}
+
+<div id="d3-viz-{{ $viz }}" class="d3-visualization" style="width: {{ $width }}; height: {{ $height }}px; margin: 20px 0;"></div>
+
+<script src="https://d3js.org/d3.v7.min.js"></script>
+<script src="/js/d3-viz/{{ $viz }}.js"></script>

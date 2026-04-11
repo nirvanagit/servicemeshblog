@@ -1,0 +1,85 @@
+/* D3.js Visualization Styles */
+
+.d3-visualization {
+  background: #ffffff;
+  border: 1px solid #dee2e6;
+  border-radius: 6px;
+  padding: 20px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  overflow: auto;
+}
+
+.d3-visualization svg {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+}
+
+.d3-visualization text {
+  user-select: none;
+  pointer-events: none;
+}
+
+/* Event nodes */
+.d3-visualization circle {
+  cursor: pointer;
+  transition: all 0.3s ease;
+}
+
+.d3-visualization circle:hover {
+  filter: drop-shadow(0 0 4px rgba(0, 0, 0, 0.3));
+}
+
+/* Axes */
+.d3-visualization .tick text {
+  font-size: 12px;
+  fill: #666;
+}
+
+.d3-visualization .domain {
+  stroke: #dee2e6;
+  stroke-width: 1;
+}
+
+.d3-visualization .tick line {
+  stroke: #e9ecef;
+  stroke-width: 1;
+  stroke-dasharray: 4;
+}
+
+/* Legend */
+.d3-visualization .legend {
+  font-size: 12px;
+}
+
+.d3-visualization .legend circle {
+  pointer-events: none;
+}
+
+/* Tooltip */
+.d3-visualization .tooltip {
+  pointer-events: none;
+  animation: fadeIn 0.3s ease-in-out;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+  .d3-visualization {
+    padding: 10px;
+  }
+
+  .d3-visualization .tick text {
+    font-size: 10px;
+  }
+
+  .d3-visualization text {
+    font-size: 10px;
+  }
+}
