@@ -8,7 +8,6 @@ author: "Service Mesh Blog"
 description: "Part 1 of our HMAC series: Learn how HMAC (Hash-Based Message Authentication Code) works and how Istio uses it to guarantee message authenticity and integrity in mTLS connections."
 ShowToc: true
 TocOpen: false
-series: ["HMAC in Istio"]
 ---
 
 ## What is HMAC?
