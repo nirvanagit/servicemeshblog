@@ -96,10 +96,10 @@ Create inner-padded key by XORing with ipad (0x36):
 padded_key XOR ipad = 32 bytes (each byte XORed with 0x36)
 
 Concatenate with message:
-(padded_key ⊕ ipad) || "Hello Bob, transfer $100"
+(padded_key XOR ipad) || "Hello Bob, transfer $100"
 
 Hash the result:
-H_inner = SHA256((padded_key ⊕ ipad) || message)
+H_inner = SHA256((padded_key XOR ipad) || message)
         = a3f4b2c7d1e8... (32 bytes in hex)
 ```
 
@@ -110,10 +110,10 @@ Create outer-padded key by XORing with opad (0x5C):
 padded_key XOR opad = 32 bytes (each byte XORed with 0x5C)
 
 Concatenate with inner hash result:
-(padded_key ⊕ opad) || H_inner
+(padded_key XOR opad) || H_inner
 
 Hash again:
-HMAC = SHA256((padded_key ⊕ opad) || H_inner)
+HMAC = SHA256((padded_key XOR opad) || H_inner)
      = 7c2e9f1a5b3d... (32 bytes in hex)
 ```
 
