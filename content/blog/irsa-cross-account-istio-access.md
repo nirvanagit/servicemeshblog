@@ -432,129 +432,211 @@ kubectl apply -f istio-rbac.yaml
 
 Here's what your controller code (in Account 1) looks like. The key: your controller uses AWS credentials (from IRSA) to authenticate to the Account 2 Kubernetes API. The api-server recognizes your IAM role via `aws-auth` and applies RBAC:
 
-```python
-#!/usr/bin/env python3
-# controller.py - Cross-account Istio management
+```go
+package main
 
-import boto3
-import os
-from kubernetes import client, config, watch
-from kubernetes.client import ApiClient
+import (
+	"fmt"
+	"log"
+	"os"
 
-# Configuration from environment
-target_cluster_name = os.getenv('TARGET_CLUSTER_NAME')
-target_cluster_region = os.getenv('TARGET_CLUSTER_REGION')
+	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/session"
+	"github.com/aws/aws-sdk-go/service/eks"
+	"github.com/aws/aws-sdk-go/service/sts"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/clientcmd"
+	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/apiutil"
 
-def get_target_cluster_config():
-    """Get the kubeconfig for the target Account 2 cluster"""
-    
-    # AWS SDK automatically uses IRSA credentials (no manual token needed)
-    eks_client = boto3.client('eks', region_name=target_cluster_region)
-    
-    # Fetch cluster info
-    cluster_info = eks_client.describe_cluster(name=target_cluster_name)
-    
-    # Create kubeconfig using aws-cli aws-iam-authenticator
-    # (Modern approach: use exec plugin for token generation)
-    kubeconfig = {
-        "apiVersion": "v1",
-        "clusters": [
-            {
-                "cluster": {
-                    "server": cluster_info['cluster']['endpoint'],
-                    "certificate-authority-data": cluster_info['cluster']['certificateAuthority']['data']
-                },
-                "name": target_cluster_name
-            }
-        ],
-        "contexts": [
-            {
-                "context": {
-                    "cluster": target_cluster_name,
-                    "user": "aws-iam-user"
-                },
-                "name": f"{target_cluster_name}-context"
-            }
-        ],
-        "current-context": f"{target_cluster_name}-context",
-        "kind": "Config",
-        "preferences": {},
-        "users": [
-            {
-                "name": "aws-iam-user",
-                "user": {
-                    # Use the AWS auth exec plugin - delegates to aws-cli for token generation
-                    "exec": {
-                        "apiVersion": "client.authentication.k8s.io/v1beta1",
-                        "command": "aws",
-                        "args": [
-                            "eks",
-                            "get-token",
-                            "--cluster-name", target_cluster_name,
-                            "--region", target_cluster_region
-                        ]
-                    }
-                }
-            }
-        ]
-    }
-    return kubeconfig
+	networkingv1beta1 "istio.io/client-go/pkg/apis/networking/v1beta1"
+	istioclient "istio.io/client-go/pkg/clientset/versioned"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+)
 
-def create_istio_virtual_service(namespace, name, service_definition):
-    """Create a VirtualService in the Account 2 cluster"""
-    
-    # Get config for target cluster
-    kubeconfig = get_target_cluster_config()
-    
-    # Load kubeconfig and create client
-    # IRSA credentials are used automatically by the aws-cli exec plugin
-    client.Configuration.set_default(client.Configuration.from_dict(kubeconfig))
-    v1 = client.CustomObjectsApi()
-    
-    # Create VirtualService in Account 2 cluster
-    virtual_service = {
-        "apiVersion": "networking.istio.io/v1beta1",
-        "kind": "VirtualService",
-        "metadata": {
-            "name": name,
-            "namespace": namespace
-        },
-        "spec": service_definition
-    }
-    
-    v1.create_namespaced_custom_object(
-        group="networking.istio.io",
-        version="v1beta1",
-        namespace=namespace,
-        plural="virtualservices",
-        body=virtual_service
-    )
-    
-    print(f"✓ Created VirtualService {namespace}/{name} in Account 2 cluster")
+type CrossAccountController struct {
+	localClient      kubernetes.Interface
+	targetClient     istioclient.Interface
+	targetCluster    string
+	targetRegion     string
+	awsSession       *session.Session
+}
 
-# Main loop: Watch for changes and sync Istio resources
-if __name__ == "__main__":
-    # Load local cluster config (where the controller runs - Account 1)
-    config.load_incluster_config()
-    v1 = client.CustomObjectsApi()
-    
-    print("✓ Controller started with IRSA credentials")
-    print(f"✓ Target cluster: {target_cluster_name} in {target_cluster_region}")
-    print("✓ Will authenticate to target cluster using AWS IAM (via aws-auth)")
-    
-    # Example: Create a test VirtualService
-    test_vs = {
-        "hosts": ["example.com"],
-        "http": [
-            {
-                "route": [
-                    {"destination": {"host": "example-service"}}
-                ]
-            }
-        ]
-    }
-    
-    create_istio_virtual_service("default", "test-vs", test_vs)
+// NewCrossAccountController initializes the controller
+func NewCrossAccountController() (*CrossAccountController, error) {
+	// Load local cluster config (Account 1)
+	localConfig, err := rest.InClusterConfig()
+	if err != nil {
+		return nil, fmt.Errorf("failed to load in-cluster config: %w", err)
+	}
+
+	localClient, err := kubernetes.NewForConfig(localConfig)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create local client: %w", err)
+	}
+
+	// Create AWS session (IRSA credentials are automatically loaded)
+	awsSession, err := session.NewSession()
+	if err != nil {
+		return nil, fmt.Errorf("failed to create AWS session: %w", err)
+	}
+
+	// Verify IRSA is working by checking STS
+	stsClient := sts.New(awsSession)
+	identity, err := stsClient.GetCallerIdentity(&sts.GetCallerIdentityInput{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to verify IRSA: %w", err)
+	}
+
+	log.Printf("✓ IRSA working: authenticated as ARN %s", *identity.Arn)
+
+	return &CrossAccountController{
+		localClient:   localClient,
+		targetCluster: os.Getenv("TARGET_CLUSTER_NAME"),
+		targetRegion:  os.Getenv("TARGET_CLUSTER_REGION"),
+		awsSession:    awsSession,
+	}, nil
+}
+
+// GetTargetClusterClient creates a Kubernetes client for the target Account 2 cluster
+func (c *CrossAccountController) GetTargetClusterClient() (istioclient.Interface, error) {
+	eksClient := eks.New(c.awsSession, aws.NewConfig().WithRegion(c.targetRegion))
+
+	// Get target cluster info
+	clusterOutput, err := eksClient.DescribeCluster(&eks.DescribeClusterInput{
+		Name: aws.String(c.targetCluster),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to describe target cluster: %w", err)
+	}
+
+	// Get endpoint and CA
+	endpoint := *clusterOutput.Cluster.Endpoint
+	caData := *clusterOutput.Cluster.CertificateAuthority.Data
+
+	// Build kubeconfig with AWS IAM authenticator (uses IRSA credentials)
+	// This uses the aws-cli exec plugin for token generation
+	kubeConfig := clientcmdapi.Config{
+		APIVersion: "v1",
+		Kind:       "Config",
+		Clusters: map[string]*clientcmdapi.Cluster{
+			c.targetCluster: {
+				Server:                   endpoint,
+				CertificateAuthorityData: []byte(caData),
+			},
+		},
+		Contexts: map[string]*clientcmdapi.Context{
+			c.targetCluster: {
+				Cluster: c.targetCluster,
+				AuthInfo: "aws-iam",
+			},
+		},
+		CurrentContext: c.targetCluster,
+		AuthInfos: map[string]*clientcmdapi.AuthInfo{
+			"aws-iam": {
+				// Use exec plugin for AWS IAM authentication
+				// Delegates to 'aws eks get-token' which uses IRSA credentials
+				Exec: &clientcmdapi.ExecConfig{
+					APIVersion: "client.authentication.k8s.io/v1beta1",
+					Command:    "aws",
+					Args: []string{
+						"eks", "get-token",
+						"--cluster-name", c.targetCluster,
+						"--region", c.targetRegion,
+					},
+				},
+			},
+		},
+	}
+
+	// Create REST config from kubeconfig
+	clientConfig := clientcmd.NewDefaultClientConfig(kubeConfig, &clientcmd.ConfigOverrides{})
+	restConfig, err := clientConfig.ClientConfig()
+	if err != nil {
+		return nil, fmt.Errorf("failed to create REST config: %w", err)
+	}
+
+	// Create Istio client
+	targetClient, err := istioclient.NewForConfig(restConfig)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create Istio client: %w", err)
+	}
+
+	return targetClient, nil
+}
+
+// CreateVirtualService creates a VirtualService in the Account 2 cluster
+func (c *CrossAccountController) CreateVirtualService(
+	namespace, name string,
+	hosts []string,
+	destination string,
+) error {
+	targetClient, err := c.GetTargetClusterClient()
+	if err != nil {
+		return err
+	}
+
+	vs := &networkingv1beta1.VirtualService{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: namespace,
+		},
+		Spec: networkingv1beta1.VirtualServiceSpec{
+			Hosts: hosts,
+			Http: []*networkingv1beta1.HTTPRoute{
+				{
+					Route: []*networkingv1beta1.HTTPRouteDestination{
+						{
+							Destination: &networkingv1beta1.Destination{
+								Host: destination,
+								Port: &networkingv1beta1.PortSelector{
+									Number: 80,
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	_, err = targetClient.NetworkingV1beta1().VirtualServices(namespace).Create(
+		nil, vs, metav1.CreateOptions{},
+	)
+	if err != nil {
+		return fmt.Errorf("failed to create VirtualService: %w", err)
+	}
+
+	log.Printf("✓ Created VirtualService %s/%s in Account 2 cluster", namespace, name)
+	return nil
+}
+
+// Main: Example usage
+func main() {
+	controller, err := NewCrossAccountController()
+	if err != nil {
+		log.Fatalf("Failed to initialize controller: %v", err)
+	}
+
+	log.Println("✓ Controller started with IRSA credentials")
+	log.Printf("✓ Target cluster: %s in %s", controller.targetCluster, controller.targetRegion)
+	log.Println("✓ Will authenticate to target cluster using AWS IAM (via aws-auth)")
+
+	// Example: Create a VirtualService in Account 2 cluster
+	err = controller.CreateVirtualService(
+		"default",
+		"test-vs",
+		[]string{"example.com"},
+		"example-service",
+	)
+	if err != nil {
+		log.Fatalf("Failed to create VirtualService: %v", err)
+	}
+
+	log.Println("✓ Cross-account Istio management successful!")
+}
 ```
 
 ### What Happens Step-by-Step
