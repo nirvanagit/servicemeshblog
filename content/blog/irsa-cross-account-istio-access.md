@@ -92,78 +92,47 @@ No passwords or keys needed. Just cryptographic proof of identity.
 
 ## Architecture Overview: The Complete Picture
 
-Let me show you exactly what's deployed where:
+Here's how the pieces fit together:
 
 ```mermaid
-graph TB
-    subgraph AWS_ACCOUNT_1["AWS Account 1 (Platform Team)"]
-        subgraph EKS_1["Kubernetes Cluster 1"]
-            CONTROLLER["Controller Pod<br/>(traffic-mgmt-controller)"]
-            SA1["Service Account<br/>(controller-sa)"]
-            OIDC["Kubernetes OIDC Provider<br/>(OIDC Discovery URL)"]
-            
-            CONTROLLER --> SA1
-            OIDC -->|signs tokens for| SA1
-        end
-        
-        IAM_ROLE_A["IAM Role: controller-role<br/>(Account 1)"]
-        TRUST_A["Trust Policy:<br/>Allow OIDC to issue<br/>credentials"]
-        
-        SA1 -->|annotated with| IAM_ROLE_A
-        IAM_ROLE_A --> TRUST_A
+graph LR
+    subgraph Acct1["📍 Account 1<br/>(Controller)"]
+        SA["Service<br/>Account"]
+        ROLE["IAM<br/>Role"]
+        OIDC["OIDC<br/>Provider"]
     end
     
-    subgraph AWS_ACCOUNT_2["AWS Account 2 (Production)"]
-        subgraph EKS_2["Kubernetes Cluster 2 (Istio)"]
-            VS["VirtualService<br/>DestinationRule<br/>Gateway"]
-            API["Kubernetes API Server<br/>(with aws-auth & RBAC)"]
-            AUTHMAP["aws-auth ConfigMap:<br/>Maps Account 1 role<br/>to k8s user"]
-        end
-        
-        AUTHMAP -->|trusts| API
-        API -->|protected by| RBAC_RULES["RBAC Rules:<br/>Allow k8s user to<br/>manage Istio"]
+    subgraph Acct2["📍 Account 2<br/>(Istio)"]
+        AUTH["aws-auth<br/>ConfigMap"]
+        RBAC["RBAC<br/>Policy"]
+        RESOURCE["VirtualService<br/>etc."]
     end
     
-    STS["AWS STS<br/>(Security Token Service)"]
+    STS["AWS STS"]
     
-    CONTROLLER -->|1. OIDC token| STS
-    STS -->|2. Temporary credentials<br/>for Account 1 role| CONTROLLER
-    CONTROLLER -->|3. Kubectl with<br/>Account 1 credentials| API
-    API -->|4. Check aws-auth:<br/>Verify Account 1 role| AUTHMAP
-    AUTHMAP -->|5. Map to k8s user<br/>and check RBAC| RBAC_RULES
-    RBAC_RULES -->|6. Allow action| API
-    API -->|7. Create/Update| VS
+    SA -->|uses| OIDC
+    OIDC -->|verifies| STS
+    STS -->|issues| ROLE
+    ROLE -->|authenticates to| AUTH
+    AUTH -->|maps to| RBAC
+    RBAC -->|controls| RESOURCE
     
-    OIDC -->|provides| STS
-    
-    style AWS_ACCOUNT_1 fill:#e1f5ff
-    style AWS_ACCOUNT_2 fill:#fff3e0
+    style Acct1 fill:#e1f5ff
+    style Acct2 fill:#fff3e0
     style STS fill:#f3e5f5
-    style CONTROLLER fill:#c8e6c9
 ```
 
-### What Each Component Does
+**The Flow**
 
-**Account 1 (Platform Team's Cluster)**
-- **Controller Pod**: Your application (e.g., traffic management controller) that needs to manage Istio
-- **Service Account**: Kubernetes identity for the controller pod
-- **OIDC Provider**: Kubernetes' built-in provider that signs identity tokens
-- **IAM Role A**: Created in Account 1, trusts the OIDC provider to issue credentials
-- **Trust Policy**: Specifies "the OIDC provider can issue credentials for this role"
+1. **Service Account** (Account 1): Controller pod's Kubernetes identity
+2. **OIDC Provider**: Verifies the pod and signs cryptographic tokens
+3. **STS**: AWS validates the token and issues temporary credentials
+4. **IAM Role**: Account 1 credentials are obtained without storing secrets
+5. **aws-auth**: Account 2 recognizes Account 1's IAM role as a valid Kubernetes user
+6. **RBAC**: Limits what the cross-account user can access (just Istio resources)
+7. **VirtualServices**: Controller can now create/manage Istio resources securely
 
-**Account 2 (Production Cluster)**
-- **Istio Resources**: VirtualServices, DestinationRules, Gateways you want to manage
-- **aws-auth ConfigMap**: Maps the Account 1 IAM role to a Kubernetes user/group
-- **RBAC Rules**: Control what the cross-account user can do in the cluster
-- **API Server**: Kubernetes API protected by aws-auth integration and RBAC
-
-**The Security Model** (Defense in Depth)
-1. **OIDC Verification**: Only the service account can get credentials for the role
-2. **Temporary Credentials**: Credentials expire automatically (no long-lived keys)
-3. **IAM Trust**: Role can only be assumed by the Kubernetes OIDC provider
-4. **aws-auth Mapping**: API server trusts the cross-account role and maps it to a Kubernetes user
-5. **Kubernetes RBAC**: Only allows the mapped user to access Istio CRDs
-6. **CloudTrail Logging**: Every action is audited
+**Key Benefit**: No role-to-role assumption needed. The Account 1 role is directly mapped to a Kubernetes user in Account 2. Simple, elegant, and secure.
 
 ---
 
