@@ -1013,36 +1013,6 @@ spec:
 
 #### How It Works at Gateway
 
-```mermaid
-graph TD
-    A1["First Request<br/>X-Nonce: nonce_12345<br/>X-Timestamp: 1712859600"] --> B["TLS Handshake<br/>at Gateway"]
-    B --> C["AuthorizationPolicy<br/>action: CUSTOM"]
-    C --> D["ext_authz: Replay Detection"]
-    D --> E1["Check 1: Timestamp<br/>Freshness"]
-    E1 --> F1{"Now - Timestamp<br/>< 5 minutes?"}
-    F1 -->|YES| G1["Check 2: Nonce<br/>Uniqueness"]
-    F1 -->|NO| H1["🚫 DENY<br/>Request Too Old"]
-    G1 --> I1{"redis.SETNX<br/>nonce:12345<br/>Success?"}
-    I1 -->|YES| J1["✓ Nonce Stored<br/>in Redis<br/>TTL: 3600s"]
-    I1 -->|NO| K1["🚫 DENY<br/>Nonce Already Used"]
-    J1 --> L1["✓ ALLOW<br/>Route to Service"]
-    
-    A2["Replayed Request<br/>Same Nonce: nonce_12345<br/>Same Timestamp"] --> B
-    K1 --> M["403 Forbidden<br/>Replay Attack Detected"]
-    H1 --> M
-    
-    style A1 fill:#51cf66
-    style L1 fill:#51cf66
-    style A2 fill:#ff6b6b
-    style K1 fill:#ff6b6b
-    style H1 fill:#ff6b6b
-    style M fill:#ff6b6b
-    style C fill:#4ecdc4
-    style D fill:#4ecdc4
-    style E1 fill:#4ecdc4
-    style G1 fill:#4ecdc4
-```
-
 **Attack Description:**
 
 ```
