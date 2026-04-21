@@ -66,9 +66,14 @@ function initReplayAttackTimeline() {
     }
   ];
 
-  // Dimensions
+  // Dimensions - handle responsive sizing
   const margin = { top: 40, right: 40, bottom: 80, left: 80 };
-  const width = container.node().clientWidth - margin.left - margin.right;
+  let containerWidth = container.node().clientWidth;
+  // Fallback for containers without explicit width
+  if (!containerWidth || containerWidth === 0) {
+    containerWidth = 800;
+  }
+  const width = containerWidth - margin.left - margin.right;
   const height = 500 - margin.top - margin.bottom;
 
   // Create SVG
@@ -84,14 +89,12 @@ function initReplayAttackTimeline() {
     .domain([0, 3600])
     .range([0, width]);
 
-  const yScale = d3.scaleBand()
-    .domain(['ALLOWED', 'REJECTED', 'EXPIRED', 'Legend'])
-    .range([height - 150, 0])
-    .padding(0.5);
+  // Fixed y-position for timeline baseline
+  const timelineY = height - 150;
 
   // X-axis (Time)
   svg.append('g')
-    .attr('transform', `translate(0,${height - 150})`)
+    .attr('transform', `translate(0,${timelineY})`)
     .call(d3.axisBottom(xScale).ticks(6).tickFormat(d => d + 's'))
     .append('text')
     .attr('x', width / 2)
@@ -105,7 +108,7 @@ function initReplayAttackTimeline() {
   svg.append('text')
     .attr('transform', 'rotate(-90)')
     .attr('y', 0 - margin.left)
-    .attr('x', 0 - (height - 150) / 2)
+    .attr('x', 0 - timelineY / 2)
     .attr('dy', '1em')
     .style('text-anchor', 'middle')
     .style('font-size', '14px')
@@ -116,8 +119,8 @@ function initReplayAttackTimeline() {
   svg.append('line')
     .attr('x1', 0)
     .attr('x2', width)
-    .attr('y1', height - 150)
-    .attr('y2', height - 150)
+    .attr('y1', timelineY)
+    .attr('y2', timelineY)
     .attr('stroke', '#dee2e6')
     .attr('stroke-width', 2);
 
@@ -131,19 +134,23 @@ function initReplayAttackTimeline() {
   // Event circles
   eventGroups.append('circle')
     .attr('cx', d => xScale(d.seconds))
-    .attr('cy', height - 150)
+    .attr('cy', timelineY)
     .attr('r', 8)
     .attr('fill', d => d.color)
     .attr('stroke', 'white')
-    .attr('stroke-width', 3);
+    .attr('stroke-width', 3)
+    .style('cursor', 'pointer');
+
+  // Helper function to get label y position based on event index
+  const getLabelY = (index) => {
+    const spacing = 70;
+    return timelineY - (spacing + index * 40);
+  };
 
   // Event labels with background
   eventGroups.append('rect')
     .attr('x', d => xScale(d.seconds) - 65)
-    .attr('y', d => {
-      if (d.status === 'ALLOWED') return yScale('ALLOWED');
-      if (d.status === 'REJECTED') return yScale('REJECTED');
-    })
+    .attr('y', (d, i) => getLabelY(i) - 20)
     .attr('width', 130)
     .attr('height', 40)
     .attr('rx', 4)
@@ -155,29 +162,30 @@ function initReplayAttackTimeline() {
   // Event text
   eventGroups.append('text')
     .attr('x', d => xScale(d.seconds))
-    .attr('y', d => {
-      if (d.status === 'ALLOWED') return yScale('ALLOWED') + 18;
-      if (d.status === 'REJECTED') return yScale('REJECTED') + 18;
-    })
+    .attr('y', (d, i) => getLabelY(i))
     .attr('text-anchor', 'middle')
+    .attr('dy', '0.35em')
     .style('font-size', '12px')
     .style('font-weight', 'bold')
     .style('fill', d => d.color)
+    .style('pointer-events', 'auto')
     .text(d => d.status);
 
   // Time labels below timeline
   eventGroups.append('text')
     .attr('x', d => xScale(d.seconds))
-    .attr('y', height - 140)
+    .attr('y', timelineY + 20)
     .attr('text-anchor', 'middle')
     .style('font-size', '11px')
     .style('fill', '#666')
+    .style('pointer-events', 'auto')
     .text(d => `${d.seconds}s`);
 
   // Legend
+  const legendY = timelineY + 60;
   const legend = svg.append('g')
     .attr('class', 'legend')
-    .attr('transform', `translate(0, ${height - 80})`);
+    .attr('transform', `translate(0, ${legendY})`);
 
   const legendData = [
     { label: '✓ Allowed', color: '#51cf66' },
@@ -191,19 +199,21 @@ function initReplayAttackTimeline() {
 
     legendItem.append('circle')
       .attr('r', 6)
-      .attr('fill', item.color);
+      .attr('fill', item.color)
+      .style('pointer-events', 'none');
 
     legendItem.append('text')
       .attr('x', 15)
       .attr('dy', '0.32em')
       .style('font-size', '12px')
+      .style('pointer-events', 'none')
       .text(item.label);
   });
 
   // Info panel
   const infoPanel = svg.append('g')
     .attr('class', 'info-panel')
-    .attr('transform', `translate(${width - 250}, 10)`);
+    .attr('transform', `translate(${Math.max(width - 250, 10)}, 10)`);
 
   infoPanel.append('rect')
     .attr('width', 240)
@@ -211,9 +221,12 @@ function initReplayAttackTimeline() {
     .attr('rx', 4)
     .attr('fill', '#f8f9fa')
     .attr('stroke', '#dee2e6')
-    .attr('stroke-width', 1);
+    .attr('stroke-width', 1)
+    .style('pointer-events', 'none');
 
-  const infoPanelText = infoPanel.append('g');
+  const infoPanelText = infoPanel.append('g')
+    .style('pointer-events', 'none');
+
   infoPanelText.append('text')
     .attr('x', 10)
     .attr('y', 20)
@@ -247,14 +260,20 @@ function initReplayAttackTimeline() {
       .duration(200)
       .attr('r', 12);
 
+    // Find the index of this event to position tooltip correctly
+    const eventIndex = events.indexOf(d);
+
     // Show tooltip
     const tooltip = svg.append('g')
       .attr('class', 'tooltip')
       .attr('pointer-events', 'none');
 
+    const tooltipX = xScale(d.seconds);
+    const tooltipY = getLabelY(eventIndex) - 100;
+
     tooltip.append('rect')
-      .attr('x', xScale(d.seconds) - 80)
-      .attr('y', yScale('Legend') - 80)
+      .attr('x', tooltipX - 80)
+      .attr('y', tooltipY)
       .attr('width', 160)
       .attr('height', 70)
       .attr('rx', 4)
@@ -262,8 +281,8 @@ function initReplayAttackTimeline() {
       .attr('opacity', 0.9);
 
     tooltip.append('text')
-      .attr('x', xScale(d.seconds))
-      .attr('y', yScale('Legend') - 60)
+      .attr('x', tooltipX)
+      .attr('y', tooltipY + 20)
       .attr('text-anchor', 'middle')
       .style('font-size', '12px')
       .style('font-weight', 'bold')
@@ -271,16 +290,16 @@ function initReplayAttackTimeline() {
       .text(d.label);
 
     tooltip.append('text')
-      .attr('x', xScale(d.seconds))
-      .attr('y', yScale('Legend') - 40)
+      .attr('x', tooltipX)
+      .attr('y', tooltipY + 40)
       .attr('text-anchor', 'middle')
       .style('font-size', '11px')
       .style('fill', '#e2e8f0')
       .text(d.redisAction);
 
     tooltip.append('text')
-      .attr('x', xScale(d.seconds))
-      .attr('y', yScale('Legend') - 20)
+      .attr('x', tooltipX)
+      .attr('y', tooltipY + 60)
       .attr('text-anchor', 'middle')
       .style('font-size', '11px')
       .style('fill', '#cbd5e0')
