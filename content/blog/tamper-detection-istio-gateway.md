@@ -1013,8 +1013,6 @@ spec:
 
 #### How It Works at Gateway
 
-{{< d3-viz name="replay-attack-timeline" height="550" >}}
-
 **Attack Description:**
 
 ```
