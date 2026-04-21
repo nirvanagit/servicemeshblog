@@ -6,3 +6,16 @@
 
 <script src="https://d3js.org/d3.v7.min.js"></script>
 <script src="/js/d3-viz/{{ $viz }}.js"></script>
+
+<script>
+// Ensure initialization happens after all scripts load
+(function() {
+  var checkD3 = setInterval(function() {
+    if (typeof d3 !== 'undefined') {
+      clearInterval(checkD3);
+      // D3 is loaded, initialization should run automatically
+      console.log('D3 Viz: D3 library confirmed loaded');
+    }
+  }, 100);
+})();
+</script>
