@@ -5,7 +5,14 @@ function initReplayAttackTimeline() {
   const containerId = '#d3-viz-replay-attack-timeline';
   const container = d3.select(containerId);
 
-  if (container.empty()) return;
+  console.log('D3 Viz: Initializing replay attack timeline');
+  console.log('D3 Viz: Container found?', !container.empty());
+  console.log('D3 Viz: D3 version:', typeof d3 !== 'undefined' ? 'loaded' : 'NOT LOADED');
+
+  if (container.empty()) {
+    console.error('D3 Viz: Container not found! ID:', containerId);
+    return;
+  }
 
   // Timeline events
   const events = [
@@ -313,11 +320,19 @@ function initReplayAttackTimeline() {
 
     svg.selectAll('.tooltip').remove();
   });
+
+  console.log('D3 Viz: Timeline visualization created successfully');
 }
 
 // Initialize when DOM is ready
+console.log('D3 Viz: Script loaded, document ready state:', document.readyState);
 if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', initReplayAttackTimeline);
+  console.log('D3 Viz: Waiting for DOM ready...');
+  document.addEventListener('DOMContentLoaded', function() {
+    console.log('D3 Viz: DOM loaded, initializing...');
+    initReplayAttackTimeline();
+  });
 } else {
+  console.log('D3 Viz: DOM already ready, initializing...');
   initReplayAttackTimeline();
 }
